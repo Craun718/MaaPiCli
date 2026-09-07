@@ -1,0 +1,157 @@
+name: meta
+
+on:
+    workflow_call:
+        inputs:
+            reuse-from-run-id:
+                description: Reuse meta outputs from this workflow run ID
+                required: false
+                default: ''
+                type: string
+            build-config:
+                description: CMake build configuration
+                required: false
+                default: RelWithDebInfo
+                type: string
+            maaframework-version:
+                description: MaaFramework release tag override
+                required: false
+                default: ''
+                type: string
+        outputs:
+            is-release:
+                value: ${{ jobs.set.outputs.is-release }}
+            is-prerelease:
+                value: ${{ jobs.set.outputs.is-prerelease }}
+            tag:
+                value: ${{ jobs.set.outputs.tag }}
+            version:
+                value: ${{ jobs.set.outputs.version }}
+            build-config:
+                value: ${{ jobs.set.outputs.build-config }}
+            maaframework-version:
+                value: ${{ jobs.set.outputs.maaframework-version }}
+            commit-sha:
+                value: ${{ jobs.set.outputs.commit-sha }}
+
+env:
+    META_OUTPUT: meta-outputs.txt
+
+permissions:
+    contents: read
+    actions: read
+
+jobs:
+    set:
+        runs-on: ubuntu-latest
+        outputs:
+            is-release: ${{ steps.set.outputs.is-release }}
+            is-prerelease: ${{ steps.set.outputs.is-prerelease }}
+            tag: ${{ steps.set.outputs.tag }}
+            version: ${{ steps.set.outputs.version }}
+            build-config: ${{ steps.set.outputs.build-config }}
+            maaframework-version: ${{ steps.set.outputs.maaframework-version }}
+            commit-sha: ${{ steps.set.outputs.commit-sha }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+
+            - name: Resolve metadata
+              id: set
+              shell: bash
+              env:
+                  REUSE_RUN_ID: ${{ inputs.reuse-from-run-id }}
+                  BUILD_CONFIG: ${{ inputs.build-config }}
+                  MAAFW_OVERRIDE: ${{ inputs.maaframework-version }}
+                  GITHUB_REF: ${{ github.ref }}
+                  GITHUB_RUN_ID: ${{ github.run_id }}
+                  GH_TOKEN: ${{ github.token }}
+              run: |
+                  if [[ -n "$REUSE_RUN_ID" ]]; then
+                      gh run download "$REUSE_RUN_ID" --repo "$GITHUB_REPOSITORY" --name meta
+                      test -f "$META_OUTPUT"
+
+                      while IFS='=' read -r key value; do
+                          case "$key" in
+                            is-release|is-prerelease|tag|version|build-config|maaframework-version|commit-sha)
+                              test -n "$value" || {
+                                  echo "Empty meta value: $key" >&2
+                                  exit 1
+                              }
+                              ;;
+                            *)
+                              continue
+                              ;;
+                          esac
+                          printf '%s=%s\n' "$key" "$value" >> "$GITHUB_OUTPUT"
+                      done < "$META_OUTPUT"
+
+                      echo "Reused meta from run $REUSE_RUN_ID"
+                      exit 0
+                  fi
+
+                  locked_versions=()
+                  while IFS= read -r locked_version || [[ -n "$locked_version" ]]; do
+                      locked_version="${locked_version%$'\r'}"
+                      if [[ -n "$locked_version" ]]; then
+                          locked_versions+=("$locked_version")
+                      fi
+                  done < maafw-version.txt
+                  if [[ "${#locked_versions[@]}" -ne 1 ]]; then
+                      echo "maafw-version.txt must contain exactly one release tag" >&2
+                      exit 1
+                  fi
+
+                  maafw_version="${MAAFW_OVERRIDE:-${locked_versions[0]}}"
+                  version_pattern='^v[0-9]+(\.[0-9]+)*(-[A-Za-z0-9][A-Za-z0-9._]*)?$'
+                  if [[ ! "$maafw_version" =~ $version_pattern ]]; then
+                      echo "Invalid MaaFramework release tag: $maafw_version" >&2
+                      exit 1
+                  fi
+
+                  commit_sha="$(git rev-parse HEAD)"
+
+                  if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+                      is_release=true
+                      tag="${GITHUB_REF##*/}"
+                      if [[ ! "$tag" =~ $version_pattern ]]; then
+                          echo "Invalid MaaPiCli release tag: $tag" >&2
+                          exit 1
+                      fi
+                  else
+                      is_release=false
+                      tag=''
+                  fi
+
+                  if [[ "$tag" == *-alpha.* || "$tag" == *-beta.* || "$tag" == *-rc.* ]]; then
+                      is_prerelease=true
+                  else
+                      is_prerelease=false
+                  fi
+
+                  if [[ "$is_release" == false ]]; then
+                      described_tag="$(git describe --tags --match 'v*' --long 2>/dev/null || true)"
+                      if [[ "$described_tag" =~ ^(v[0-9]+(\.[0-9]+)*)-([0-9]+)-g[0-9a-f]+$ ]]; then
+                          tag="${BASH_REMATCH[1]}-post.${BASH_REMATCH[3]}-ci.${GITHUB_RUN_ID}"
+                      else
+                          tag="v0.0.0-ci.${GITHUB_RUN_ID}"
+                      fi
+                  fi
+
+                  version="${tag#v}"
+
+                  {
+                      printf 'is-release=%s\n' "$is_release"
+                      printf 'is-prerelease=%s\n' "$is_prerelease"
+                      printf 'tag=%s\n' "$tag"
+                      printf 'version=%s\n' "$version"
+                      printf 'build-config=%s\n' "$BUILD_CONFIG"
+                      printf 'maaframework-version=%s\n' "$maafw_version"
+                      printf 'commit-sha=%s\n' "$commit_sha"
+                  } | tee -a "$GITHUB_OUTPUT" > "$META_OUTPUT"
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: meta
+                  path: ${{ env.META_OUTPUT }}

@@ -6,6 +6,20 @@ MaaFramework 官方提供的命令行 ProjectInterface Client，用于通过终�
 
 从 MaaFramework Release 下载对应平台的 `MAA-MaaPiCli-<os>-<arch>` 独立包。`MaaPiCli` 不再包含在 `MAA-*` 主包中。
 
+## 本地编译
+
+仓库根目录的 `maafw-version.txt` 锁定本版本 MaaPiCli 使用的 MaaFramework release tag。fork、历史 tag 或 release 包中都带有这个文件，可以直接确认应使用的 runtime 版本。
+
+编译前先读取该文件，并从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载同名版本的 `MAA-<os>-<arch>-<version>.zip`。解压后把该目录传入 `CMAKE_PREFIX_PATH`，同时按平台安装 Boost 与 OpenCV 的开发配置：
+
+```bash
+maafw_version="$(cat maafw-version.txt)"
+cmake -S . -B build \
+  -DCMAKE_PREFIX_PATH="/path/to/maafw-prefix;/path/to/dependency-prefix" \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build --config RelWithDebInfo -j 16
+```
+
 ## PI 协议支持版本
 
 **已支持至 PI v2.5.0**（2026-03-23）

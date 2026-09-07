@@ -1,0 +1,52 @@
+name: format
+
+on:
+    push:
+        branches:
+            - main
+        paths:
+            - '.clang-format'
+            - '.github/workflows/format.yml'
+            - 'CLI/**'
+            - 'Impl/**'
+            - 'include/**'
+            - 'test/**/*.cpp'
+            - 'test/**/*.h'
+    pull_request:
+        paths:
+            - '.clang-format'
+            - '.github/workflows/format.yml'
+            - 'CLI/**'
+            - 'Impl/**'
+            - 'include/**'
+            - 'test/**/*.cpp'
+            - 'test/**/*.h'
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+    cancel-in-progress: true
+
+jobs:
+    clang-format:
+        runs-on: macos-latest
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Install clang-format
+              run: |
+                  brew install clang-format
+                  clang-format --version
+
+            - name: Check formatting
+              run: |
+                  files="$(
+                    git ls-files \
+                      '*.c' '*.cc' '*.cpp' '*.cppm' '*.cxx' \
+                      '*.h' '*.hh' '*.hpp' '*.hxx' '*.h++'
+                  )"
+                  test -n "$files"
+                  xargs clang-format --dry-run --Werror <<< "$files"

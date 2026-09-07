@@ -1,0 +1,257 @@
+name: build
+
+on:
+    push:
+        tags:
+            - 'v*'
+        branches:
+            - 'main'
+        paths:
+            - '.github/workflows/build.yml'
+            - '.github/workflows/meta.yml'
+            - '.github/actions/setup-maafw/**'
+            - 'CLI/**'
+            - 'Impl/**'
+            - 'include/**'
+            - 'maafw-version.txt'
+            - 'test/package/maapicli/**'
+            - 'cmake/**'
+            - 'CMakeLists.txt'
+            - 'README.md'
+            - 'LICENSE.md'
+    pull_request:
+        branches:
+            - '**'
+        paths:
+            - '.github/workflows/build.yml'
+            - '.github/workflows/meta.yml'
+            - '.github/actions/setup-maafw/**'
+            - 'CLI/**'
+            - 'Impl/**'
+            - 'include/**'
+            - 'maafw-version.txt'
+            - 'test/package/maapicli/**'
+            - 'cmake/**'
+            - 'CMakeLists.txt'
+            - 'README.md'
+            - 'LICENSE.md'
+    workflow_dispatch:
+        inputs:
+            build-config:
+                description: CMake build configuration
+                required: true
+                default: 'RelWithDebInfo'
+                type: choice
+                options:
+                    - Debug
+                    - RelWithDebInfo
+                    - Release
+            maaframework-repository:
+                description: MaaFramework repository
+                required: true
+                default: 'MaaXYZ/MaaFramework'
+                type: string
+            maaframework-version:
+                description: MaaFramework release tag override
+                required: false
+                default: ''
+                type: string
+
+permissions:
+    contents: read
+    actions: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}${{ github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
+    cancel-in-progress: true
+
+jobs:
+    meta:
+        uses: ./.github/workflows/meta.yml
+        with:
+            build-config: ${{ inputs.build-config || 'RelWithDebInfo' }}
+            maaframework-version: ${{ inputs.maaframework-version || '' }}
+
+    build:
+        needs: meta
+        name: ${{ matrix.os }} ${{ matrix.arch }}
+        runs-on: ${{ matrix.runs-on }}
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - os: windows
+                      runs-on: windows-2025-vs2026
+                      arch: x86_64
+                      platform: x64
+                      can-run: true
+                    - os: windows
+                      runs-on: windows-2025-vs2026
+                      arch: aarch64
+                      platform: ARM64
+                      can-run: false
+                    - os: linux
+                      runs-on: ubuntu-latest
+                      arch: x86_64
+                      platform: x86_64
+                      can-run: true
+                    - os: linux
+                      runs-on: ubuntu-latest
+                      arch: aarch64
+                      platform: aarch64
+                      can-run: false
+                    - os: macos
+                      runs-on: macos-15
+                      arch: x86_64
+                      platform: x86_64
+                      can-run: true
+                    - os: macos
+                      runs-on: macos-15
+                      arch: aarch64
+                      platform: arm64
+                      can-run: true
+
+        steps:
+            - uses: actions/checkout@v7
+
+            - name: Setup precompiled MaaFramework
+              id: setup-maafw
+              uses: ./.github/actions/setup-maafw
+              with:
+                  repository: ${{ inputs.maaframework-repository || 'MaaXYZ/MaaFramework' }}
+                  version: ${{ needs.meta.outputs.maaframework-version }}
+                  arch: ${{ matrix.arch }}
+
+            - name: Build and install MaaPiCli
+              shell: bash
+              run: |
+                  build_config="${{ needs.meta.outputs.build-config }}"
+                  cmake_args=(
+                    -S .
+                    -B build-maapicli
+                    -DCMAKE_PREFIX_PATH="${{ steps.setup-maafw.outputs.install-prefix }};${{ steps.setup-maafw.outputs.dependency-prefix }}"
+                    -DCMAKE_BUILD_TYPE="$build_config"
+                  )
+
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      cmake_args+=(-A "${{ matrix.platform }}" -DCMAKE_SYSTEM_VERSION="10.0.26100.0")
+                  elif [[ "${{ runner.os }}" == "Linux" ]]; then
+                      cmake_args+=(-DCMAKE_TOOLCHAIN_FILE="${{ steps.setup-maafw.outputs.toolchain-file }}")
+                  else
+                      cmake_args+=(-DCMAKE_OSX_SYSROOT=macosx -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform }}")
+                  fi
+
+                  cmake "${cmake_args[@]}"
+                  cmake --build build-maapicli --config "$build_config" -j 16
+                  cmake --install build-maapicli --prefix "$PWD/install-maapicli" --config "$build_config"
+
+            - name: Test MaaPiCli package
+              if: matrix.can-run
+              shell: bash
+              run: |
+                  build_config="${{ needs.meta.outputs.build-config }}"
+                  framework_prefix="${{ steps.setup-maafw.outputs.install-prefix }}"
+                  maapicli_prefix="$PWD/install-maapicli"
+
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      framework_prefix=$(cygpath -u "$framework_prefix")
+                      maapicli_prefix=$(cygpath -m "$maapicli_prefix")
+                  fi
+
+                  export PATH="$framework_prefix/bin:$PATH"
+
+                  package_args=(
+                    -S test/package/maapicli
+                    -B build-package-test
+                    -DCMAKE_PREFIX_PATH="$maapicli_prefix;${{ steps.setup-maafw.outputs.install-prefix }};${{ steps.setup-maafw.outputs.dependency-prefix }}"
+                    -DMaaPiCli_DIR="$maapicli_prefix/share/cmake/MaaPiCli"
+                    -DCMAKE_BUILD_TYPE="$build_config"
+                  )
+                  if [[ "${{ runner.os }}" == "macOS" ]]; then
+                      package_args+=(-DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform }}")
+                  fi
+                  if [[ "${{ runner.os }}" == "Linux" ]]; then
+                      package_args+=(-DCMAKE_TOOLCHAIN_FILE="${{ steps.setup-maafw.outputs.toolchain-file }}")
+                  fi
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      package_args+=(-A x64)
+                  fi
+
+                  cmake "${package_args[@]}"
+                  cmake --build build-package-test --config "$build_config" -j 16
+                  ctest --test-dir build-package-test -C "$build_config" --output-on-failure --timeout 60
+
+            - name: Build library only
+              shell: bash
+              run: |
+                  build_config="${{ needs.meta.outputs.build-config }}"
+                  cmake_args=(
+                    -S .
+                    -B build-maapicli-core
+                    -DMaaPiCli_BUILD_EXECUTABLE=OFF
+                    -DCMAKE_PREFIX_PATH="${{ steps.setup-maafw.outputs.install-prefix }};${{ steps.setup-maafw.outputs.dependency-prefix }}"
+                    -DCMAKE_BUILD_TYPE="$build_config"
+                  )
+
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      cmake_args+=(-A "${{ matrix.platform }}" -DCMAKE_SYSTEM_VERSION="10.0.26100.0")
+                  elif [[ "${{ runner.os }}" == "Linux" ]]; then
+                      cmake_args+=(-DCMAKE_TOOLCHAIN_FILE="${{ steps.setup-maafw.outputs.toolchain-file }}")
+                  else
+                      cmake_args+=(-DCMAKE_OSX_SYSROOT=macosx -DCMAKE_OSX_ARCHITECTURES="${{ matrix.platform }}")
+                  fi
+
+                  cmake "${cmake_args[@]}"
+                  cmake --build build-maapicli-core --config "$build_config" -j 16
+                  cmake --install build-maapicli-core --prefix "$PWD/install-maapicli-core" --config "$build_config"
+
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      test ! -e install-maapicli-core/bin/MaaPiCli.exe
+                  else
+                      test ! -e install-maapicli-core/bin/MaaPiCli
+                  fi
+
+            - name: Package MaaPiCli
+              shell: bash
+              env:
+                  RESOLVED_MAAFW_VERSION: ${{ needs.meta.outputs.maaframework-version }}
+              run: |
+                  mkdir -p package/bin
+
+                  if [[ -d "${{ steps.setup-maafw.outputs.install-prefix }}/bin/plugins" ]]; then
+                      cp -a "${{ steps.setup-maafw.outputs.install-prefix }}/bin/plugins" package/bin/
+                  fi
+
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      find "${{ steps.setup-maafw.outputs.install-prefix }}/bin" -maxdepth 1 -type f \( -name '*.dll' -o -name '*.exe' \) -exec cp {} package/bin/ \;
+                      cp install-maapicli/bin/MaaPiCli.exe package/bin/
+                  elif [[ "${{ runner.os }}" == "Linux" ]]; then
+                      cp -a "${{ steps.setup-maafw.outputs.install-prefix }}/bin"/*.so* package/bin/
+                      cp install-maapicli/bin/MaaPiCli package/bin/
+                  else
+                      cp -a "${{ steps.setup-maafw.outputs.install-prefix }}/bin"/*.dylib package/bin/
+                      cp install-maapicli/bin/MaaPiCli package/bin/
+                  fi
+
+                  cp README.md package/
+                  cp LICENSE.md package/
+                  printf '%s\n' "$RESOLVED_MAAFW_VERSION" > package/maafw-version.txt
+
+                  if [[ "${{ runner.os }}" == "Windows" ]]; then
+                      executable=MaaPiCli.exe
+                  else
+                      executable=MaaPiCli
+                  fi
+                  cli_count="$(find package/bin -maxdepth 1 -type f -name "$executable" | wc -l)"
+                  cli_count=$((cli_count))
+                  if (( cli_count != 1 )); then
+                      echo "Expected exactly one $executable in package/bin, found $cli_count" >&2
+                      exit 1
+                  fi
+                  packaged_version="$(cat package/maafw-version.txt)"
+                  test "$packaged_version" = "$RESOLVED_MAAFW_VERSION"
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: MAA-MaaPiCli-${{ matrix.os }}-${{ matrix.arch }}
+                  path: package

@@ -4,6 +4,8 @@ project(MaaPiCli VERSION 0.1.0 LANGUAGES CXX)
 
 option(MaaPiCli_BUILD_EXECUTABLE "build the MaaPiCli executable" ON)
 
+find_package(Boost REQUIRED CONFIG COMPONENTS system regex)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(MaaFramework CONFIG REQUIRED)
 
 file(GLOB_RECURSE maa_pi_cli_header include/ProjectInterface/*.h)
@@ -31,7 +33,10 @@ target_link_libraries(
     PUBLIC MaaFramework::MaaFramework
            MaaFramework::MaaToolkit
            MaaFramework::MaaAgentClient
-           MaaFramework::MaaUtils)
+           MaaFramework::MaaUtils
+           Boost::system
+           Boost::regex
+           ${OpenCV_LIBS})
 
 if(LINUX)
     find_package(Threads REQUIRED)

@@ -1,0 +1,117 @@
+name: release
+
+on:
+    workflow_dispatch:
+        inputs:
+            run-id:
+                description: Build workflow run ID
+                required: true
+                type: string
+            dry-run:
+                description: Verify artifacts and changelog without publishing
+                required: false
+                default: false
+                type: boolean
+            run-name:
+                description: Run name
+                required: false
+                default: ''
+                type: string
+
+run-name: >-
+    ${{ inputs.run-name || 'MaaPiCli' }} Release |
+    ${{ inputs.dry-run && 'Dry Run' || 'Publish' }} |
+    Build #${{ inputs.run-id }}
+
+permissions:
+    contents: write
+    actions: read
+
+concurrency:
+    group: ${{ github.workflow }}-${{ inputs.run-id }}
+    cancel-in-progress: false
+
+jobs:
+    meta:
+        uses: ./.github/workflows/meta.yml
+        with:
+            reuse-from-run-id: ${{ inputs.run-id }}
+
+    changelog:
+        needs: meta
+        runs-on: ubuntu-latest
+        outputs:
+            release_body: ${{ steps.git-cliff.outputs.content }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+
+            - name: Checkout build commit
+              shell: bash
+              env:
+                  COMMIT_SHA: ${{ needs.meta.outputs.commit-sha }}
+              run: git checkout --detach "$COMMIT_SHA"
+
+            - name: Generate changelog
+              uses: orhun/git-cliff-action@v4
+              id: git-cliff
+              with:
+                  config: .github/cliff.toml
+                  args: >-
+                      -vv --latest --strip header
+                      ${{ needs.meta.outputs.is-prerelease == 'false' && '--tag-pattern "^v[0-9]+\\.[0-9]+\\.[0-9]+$"' || '' }}
+              env:
+                  OUTPUT: CHANGES.md
+                  GITHUB_REPO: ${{ github.repository }}
+                  GITHUB_TOKEN: ${{ github.token }}
+
+    github:
+        needs:
+            - meta
+            - changelog
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download build artifacts
+              uses: dawidd6/action-download-artifact@v21
+              with:
+                  workflow: build.yml
+                  run_id: ${{ inputs.run-id }}
+                  name_is_regexp: true
+                  name: MAA-MaaPiCli-*
+                  path: assets
+                  check_artifacts: true
+                  if_no_artifact_found: fail
+
+            - name: Create and verify release archives
+              shell: bash
+              env:
+                  RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+              run: |
+                  expected_artifacts=6
+                  actual_artifacts="$(find assets -mindepth 1 -maxdepth 1 -type d -name 'MAA-MaaPiCli-*' | wc -l)"
+                  if [[ "$actual_artifacts" != "$expected_artifacts" ]]; then
+                      echo "Expected $expected_artifacts platform artifacts, found $actual_artifacts" >&2
+                      exit 1
+                  fi
+
+                  for directory in assets/MAA-MaaPiCli-*; do
+                      name="$(basename "$directory")"
+                      (
+                          cd "$directory"
+                          zip -qr "../${name}-${RELEASE_TAG}.zip" .
+                      )
+                  done
+
+                  test "$(find assets -maxdepth 1 -type f -name "MAA-MaaPiCli-*-${RELEASE_TAG}.zip" | wc -l)" \
+                    -eq "$expected_artifacts"
+
+            - name: Publish GitHub release
+              if: inputs.dry-run != true
+              uses: softprops/action-gh-release@v3
+              with:
+                  files: assets/MAA-MaaPiCli-*.zip
+                  tag_name: ${{ needs.meta.outputs.tag }}
+                  target_commitish: ${{ needs.meta.outputs.commit-sha }}
+                  prerelease: ${{ needs.meta.outputs.is-prerelease == 'true' }}
+                  body: ${{ needs.changelog.outputs.release_body }}

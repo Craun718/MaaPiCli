@@ -1,0 +1,224 @@
+name: Setup precompiled MaaFramework
+description: Download a MaaFramework release and bootstrap its development dependencies
+
+inputs:
+    repository:
+        description: GitHub repository that publishes the MaaFramework release
+        required: true
+    version:
+        description: Exact MaaFramework release tag
+        required: true
+    arch:
+        description: Target architecture
+        required: true
+
+outputs:
+    install-prefix:
+        description: Precompiled MaaFramework CMake prefix
+        value: ${{ steps.prefixes.outputs.install-prefix }}
+    dependency-prefix:
+        description: Installed MaaDeps prefix required by exported CMake targets
+        value: ${{ steps.prefixes.outputs.dependency-prefix }}
+    toolchain-file:
+        description: MaaDeps CMake toolchain file, when cross-compiling
+        value: ${{ steps.prefixes.outputs.toolchain-file }}
+
+runs:
+    using: composite
+    steps:
+        - name: Resolve package identifiers
+          id: resolve
+          shell: bash
+          env:
+              REPOSITORY: ${{ inputs.repository }}
+              VERSION: ${{ inputs.version }}
+              ARCH: ${{ inputs.arch }}
+          run: |
+              version_pattern='^v[0-9]+(\.[0-9]+)*(-[A-Za-z0-9][A-Za-z0-9._]*)?$'
+              if [[ ! "$VERSION" =~ $version_pattern ]]; then
+                  echo "Invalid MaaFramework release tag: $VERSION" >&2
+                  exit 1
+              fi
+              repository_pattern='^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
+              if [[ ! "$REPOSITORY" =~ $repository_pattern ]]; then
+                  echo "Invalid MaaFramework repository: $REPOSITORY" >&2
+                  exit 1
+              fi
+
+              case "$RUNNER_OS" in
+                Windows) package_os=win; deps_os=windows ;;
+                Linux) package_os=linux; deps_os=linux ;;
+                macOS) package_os=macos; deps_os=osx ;;
+                *)
+                  echo "Unsupported runner OS: $RUNNER_OS" >&2
+                  exit 1
+                  ;;
+              esac
+
+              case "$ARCH" in
+                x86_64) package_arch=x86_64; deps_arch=x64 ;;
+                aarch64) package_arch=aarch64; deps_arch=arm64 ;;
+                *)
+                  echo "Unsupported architecture: $ARCH" >&2
+                  exit 1
+                  ;;
+              esac
+
+              cache_repository="${REPOSITORY//\//-}"
+              {
+                  echo "package-os=$package_os"
+                  echo "package-arch=$package_arch"
+                  echo "deps-arch=$deps_arch"
+                  echo "deps-os=$deps_os"
+                  echo "cache-repository=$cache_repository"
+              } >> "$GITHUB_OUTPUT"
+
+        - name: Checkout MaaFramework source
+          uses: actions/checkout@v7
+          with:
+              repository: ${{ inputs.repository }}
+              ref: ${{ inputs.version }}
+              path: MaaFramework
+
+        - name: Checkout pinned MaaUtils
+          shell: bash
+          run: git -C "$GITHUB_WORKSPACE/MaaFramework" submodule update --init --recursive source/MaaUtils
+
+        - name: Setup Python
+          uses: actions/setup-python@v6
+          with:
+              python-version: '3.9'
+
+        - name: Cache precompiled MaaFramework
+          id: cache-maafw
+          uses: actions/cache@v6
+          with:
+              path: maafw-prefix
+              key: maafw-runtime-${{ runner.os }}-${{ inputs.arch }}-${{ steps.resolve.outputs.cache-repository }}-${{ inputs.version }}
+
+        - name: Download precompiled MaaFramework
+          if: steps.cache-maafw.outputs.cache-hit != 'true'
+          shell: bash
+          env:
+              REPOSITORY: ${{ inputs.repository }}
+              VERSION: ${{ inputs.version }}
+              PACKAGE_OS: ${{ steps.resolve.outputs.package-os }}
+              PACKAGE_ARCH: ${{ steps.resolve.outputs.package-arch }}
+          run: |
+              asset="MAA-$PACKAGE_OS-$PACKAGE_ARCH-$VERSION.zip"
+              archive="$RUNNER_TEMP/$asset"
+              curl --fail --location --retry 3 --output "$archive" \
+                "https://github.com/$REPOSITORY/releases/download/$VERSION/$asset"
+              mkdir -p "$GITHUB_WORKSPACE/maafw-prefix"
+              unzip -q "$archive" -d "$GITHUB_WORKSPACE/maafw-prefix"
+
+        - name: Cache MaaDeps
+          id: cache-maadeps
+          uses: actions/cache@v6
+          with:
+              path: MaaFramework/source/MaaUtils/MaaDeps
+              key: maadeps-${{ runner.os }}-${{ inputs.arch }}-${{ steps.resolve.outputs.cache-repository }}-${{ inputs.version }}
+
+        - name: Bootstrap MaaDeps
+          if: steps.cache-maadeps.outputs.cache-hit != 'true'
+          shell: bash
+          working-directory: ${{ github.workspace }}/MaaFramework
+          env:
+              GITHUB_TOKEN: ${{ github.token }}
+              DEPS_ARCH: ${{ steps.resolve.outputs.deps-arch }}
+              DEPS_OS: ${{ steps.resolve.outputs.deps-os }}
+          run: python tools/maadeps-download.py "$DEPS_ARCH-$DEPS_OS"
+
+        - name: Build Windows MaaUtils import library
+          if: runner.os == 'Windows'
+          shell: bash
+          working-directory: ${{ github.workspace }}/MaaFramework
+          env:
+              ARCH: ${{ inputs.arch }}
+          run: |
+              if [[ "$ARCH" == "x86_64" ]]; then
+                cmake_preset="MSVC 2022"
+                deps_triplet="maa-x64-windows"
+              else
+                cmake_preset="MSVC 2022 ARM"
+                deps_triplet="maa-arm64-windows"
+              fi
+
+              cmake \
+                --preset "$cmake_preset" \
+                -DMAADEPS_TRIPLET="$deps_triplet" \
+                -DCMAKE_SYSTEM_VERSION="10.0.26100.0" \
+                -DBUILD_PICLI=OFF \
+                -DWITH_ADB_CONTROLLER=OFF \
+                -DWITH_WIN32_CONTROLLER=OFF \
+                -DWITH_CUSTOM_CONTROLLER=OFF \
+                -DWITH_GAMEPAD_CONTROLLER=OFF \
+                -DWITH_RECORD_CONTROLLER=OFF \
+                -DWITH_MAA_AGENT=OFF \
+                -DWITH_NODEJS_BINDING=OFF \
+                -DWITH_QUICKJS_BINDING=OFF
+              cmake --build build --preset "$cmake_preset - Release" --target MaaUtils
+
+              source_prefix="$GITHUB_WORKSPACE/MaaFramework"
+              runtime_prefix="$GITHUB_WORKSPACE/maafw-prefix"
+              import_lib="$(find "$source_prefix/build" -type f -path '*/Release/MaaUtils.lib' -print -quit)"
+              test -n "$import_lib"
+              test -s "$import_lib"
+
+              mkdir -p "$runtime_prefix/lib"
+              cp "$import_lib" "$runtime_prefix/lib/MaaUtils.lib"
+
+              # The runtime release exports MaaUtils, but omits its Windows import library.
+              printf '%s\n' \
+                'set_target_properties(MaaFramework::MaaUtils PROPERTIES' \
+                '  IMPORTED_IMPLIB "${_IMPORT_PREFIX}/lib/MaaUtils.lib"' \
+                '  IMPORTED_IMPLIB_DEBUG "${_IMPORT_PREFIX}/lib/MaaUtils.lib"' \
+                '  IMPORTED_IMPLIB_RELEASE "${_IMPORT_PREFIX}/lib/MaaUtils.lib"' \
+                '  IMPORTED_IMPLIB_RELWITHDEBINFO "${_IMPORT_PREFIX}/lib/MaaUtils.lib"' \
+                '  IMPORTED_IMPLIB_MINSIZEREL "${_IMPORT_PREFIX}/lib/MaaUtils.lib"' \
+                '  INTERFACE_LINK_LIBRARIES "Boost::regex;${_IMPORT_PREFIX}/lib/MaaUtils.lib"' \
+                ')' \
+                'list(APPEND _cmake_import_check_files_for_MaaUtils "${_IMPORT_PREFIX}/lib/MaaUtils.lib")' \
+                > "$runtime_prefix/share/cmake/MaaFramework/MaaFramework-standalone.cmake"
+
+        - name: Finalize MaaFramework prefix
+          shell: bash
+          run: |
+              runtime_prefix="$GITHUB_WORKSPACE/maafw-prefix"
+              test -f "$runtime_prefix/share/cmake/MaaFramework/MaaFrameworkConfig.cmake"
+
+              rm -f "$runtime_prefix/bin/MaaPiCli" "$runtime_prefix/bin/MaaPiCli.exe"
+              mkdir -p "$runtime_prefix/include"
+              cp -a "$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/include/." "$runtime_prefix/include/"
+              mkdir -p "$runtime_prefix/include/Common"
+              cp -a "$GITHUB_WORKSPACE/MaaFramework/source/include/Common/." "$runtime_prefix/include/Common/"
+
+        - name: Export dependency prefixes
+          id: prefixes
+          shell: bash
+          env:
+              DEPS_ARCH: ${{ steps.resolve.outputs.deps-arch }}
+              DEPS_OS: ${{ steps.resolve.outputs.deps-os }}
+          run: |
+              install_prefix="$GITHUB_WORKSPACE/maafw-prefix"
+              dependency_prefix="$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/vcpkg/installed/maa-$DEPS_ARCH-$DEPS_OS"
+              toolchain_file=""
+              if [[ "$RUNNER_OS" == "Linux" ]]; then
+                  toolchain_file="$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/cmake/maa-$DEPS_ARCH-linux-toolchain.cmake"
+              fi
+
+              test -d "$dependency_prefix"
+              if [[ -n "$toolchain_file" ]]; then
+                  test -f "$toolchain_file"
+              fi
+
+              if [[ "$RUNNER_OS" == "Windows" ]]; then
+                  install_prefix=$(cygpath -m "$install_prefix")
+                  dependency_prefix=$(cygpath -m "$dependency_prefix")
+              fi
+
+              {
+                  echo "install-prefix=$install_prefix"
+                  echo "dependency-prefix=$dependency_prefix"
+                  echo "toolchain-file=$toolchain_file"
+              } >> "$GITHUB_OUTPUT"

@@ -1,0 +1,65 @@
+name: deploy-manual
+
+on:
+    push:
+        tags:
+            - v*
+    workflow_dispatch:
+        inputs:
+            run-id:
+                description: Optional build run ID whose metadata should be reused
+                required: false
+                default: ''
+                type: string
+
+permissions:
+    contents: read
+    actions: read
+
+concurrency:
+    group: ${{ github.workflow }}
+    cancel-in-progress: false
+
+jobs:
+    meta:
+        uses: ./.github/workflows/meta.yml
+        with:
+            reuse-from-run-id: ${{ inputs.run-id || '' }}
+
+    deploy:
+        needs: meta
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        env:
+            MAN_VERSION: ${{ format('({0}) {1}', needs.meta.outputs.tag == github.ref_name && 'main' || github.ref_name, needs.meta.outputs.tag) }}
+            DOC_COMMIT: ${{ needs.meta.outputs.commit-sha }}
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0
+
+            - name: Checkout documented commit
+              run: git checkout --detach "$DOC_COMMIT"
+
+            - name: Build Doxygen
+              uses: mattnotmitt/doxygen-action@v1
+              with:
+                  doxyfile-path: docs/Doxyfile
+              env:
+                  DOC_VERSION: ${{ env.MAN_VERSION }}
+
+            - name: Build API index
+              uses: MaaXYZ/MaaApiConverter@v2
+              with:
+                  version: ${{ env.MAN_VERSION }}
+                  xml: ./docs-gen/html/xml
+                  output: ./docs-gen/html
+
+            - name: Deploy to GitHub Pages
+              uses: peaceiris/actions-gh-pages@v4
+              with:
+                  github_token: ${{ secrets.GITHUB_TOKEN }}
+                  publish_dir: ./docs-gen/html
+                  publish_branch: gh-pages
+                  commit_message: ${{ env.MAN_VERSION }}
