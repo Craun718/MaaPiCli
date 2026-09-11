@@ -11,27 +11,6 @@ MAA_PROJECT_INTERFACE_NS_BEGIN
 
 namespace
 {
-std::vector<InterfaceData::Pretask>
-    flatten_pretask(const std::optional<std::variant<InterfaceData::Pretask, std::vector<InterfaceData::Pretask>>>& pretask)
-{
-    if (!pretask) {
-        return { };
-    }
-
-    return std::visit(
-        [](const auto& value) -> std::vector<InterfaceData::Pretask> {
-            using value_t = std::decay_t<decltype(value)>;
-
-            if constexpr (std::is_same_v<value_t, InterfaceData::Pretask>) {
-                return { value };
-            }
-            else {
-                return value;
-            }
-        },
-        *pretask);
-}
-
 std::optional<InterfaceData> deserialize_interface(const json::value& json)
 {
     std::string error_key;
@@ -86,7 +65,11 @@ bool validate_interface(const InterfaceData& data)
         }
     }
 
-    for (const auto& pretask : flatten_pretask(data.pretask)) {
+    for (const auto& pretask : Parser::flatten_pretask(data.pretask)) {
+        if (pretask.exec.empty()) {
+            LogError << "Pretask exec is empty";
+            return false;
+        }
         if (!check_option_refs(pretask.option)) {
             return false;
         }
@@ -105,6 +88,27 @@ bool validate_interface(const InterfaceData& data)
 }
 } // namespace
 
+std::vector<InterfaceData::Pretask>
+    Parser::flatten_pretask(const std::optional<std::variant<InterfaceData::Pretask, std::vector<InterfaceData::Pretask>>>& pretask)
+{
+    if (!pretask) {
+        return { };
+    }
+
+    return std::visit(
+        [](const auto& value) -> std::vector<InterfaceData::Pretask> {
+            using value_t = std::decay_t<decltype(value)>;
+
+            if constexpr (std::is_same_v<value_t, InterfaceData::Pretask>) {
+                return { value };
+            }
+            else {
+                return value;
+            }
+        },
+        *pretask);
+}
+
 std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path& path)
 {
     LogFunc << VAR(path);
@@ -122,7 +126,7 @@ std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path
     }
 
     InterfaceData& data = *data_opt;
-    std::vector<InterfaceData::Pretask> merged_pretask = flatten_pretask(data.pretask);
+    std::vector<InterfaceData::Pretask> merged_pretask = Parser::flatten_pretask(data.pretask);
     bool has_pretask = data.pretask.has_value();
     std::unordered_set<std::string> group_names;
     for (const auto& group : data.group) {
@@ -163,7 +167,7 @@ std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path
             }
         }
 
-        auto import_pretasks = flatten_pretask(import_data->pretask);
+        auto import_pretasks = Parser::flatten_pretask(import_data->pretask);
         has_pretask = has_pretask || import_data->pretask.has_value();
         merged_pretask.insert(
             merged_pretask.end(),
@@ -322,6 +326,18 @@ bool Parser::check_configuration(const InterfaceData& data, Configuration& confi
                 }
             } break;
             case InterfaceData::Option::Type::Input:
+                for (auto input_it = it->inputs.begin(); input_it != it->inputs.end();) {
+                    const auto& input_name = input_it->first;
+                    const bool found = std::ranges::any_of(data_option.inputs, [&](const auto& input) { return input.name == input_name; });
+                    if (found) {
+                        ++input_it;
+                    }
+                    else {
+                        LogWarn << "Input not found in interface, removing from config" << VAR(it->name) << VAR(input_name);
+                        input_it = it->inputs.erase(input_it);
+                        erased = true;
+                    }
+                }
                 break;
             }
 
@@ -337,6 +353,26 @@ bool Parser::check_configuration(const InterfaceData& data, Configuration& confi
     check_option_list(config.global_option);
     check_option_list(config.resource_option);
     check_option_list(config.controller_option);
+
+    auto pretask_identifier = [](const InterfaceData::Pretask& pretask) {
+        return pretask.name.empty() ? pretask.exec : pretask.name;
+    };
+
+    for (auto pretask_iter = config.pretask.begin(); pretask_iter != config.pretask.end();) {
+        check_option_list(pretask_iter->option);
+
+        const auto data_pretasks = Parser::flatten_pretask(data.pretask);
+        auto data_pretask_iter =
+            std::ranges::find_if(data_pretasks, [&](const auto& pretask) { return pretask_identifier(pretask) == pretask_iter->name; });
+        if (data_pretask_iter == data_pretasks.end()) {
+            LogWarn << "Pretask not found in interface, removing from config" << VAR(pretask_iter->name);
+            pretask_iter = config.pretask.erase(pretask_iter);
+            erased = true;
+            continue;
+        }
+
+        ++pretask_iter;
+    }
 
     return !erased;
 }

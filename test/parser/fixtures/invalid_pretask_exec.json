@@ -1,0 +1,12 @@
+{
+    "interface_version": 2,
+    "controller": [
+        { "name": "default-controller", "type": "Adb" }
+    ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] }
+    ],
+    "pretask": {
+        "exec": ""
+    }
+}

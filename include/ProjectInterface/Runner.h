@@ -9,6 +9,7 @@ MAA_PROJECT_INTERFACE_NS_BEGIN
 class Runner
 {
 public:
+    static bool run_pretasks(const std::vector<RuntimeParam::Pretask>& pretasks);
     static bool run(const RuntimeParam& param);
 };
 

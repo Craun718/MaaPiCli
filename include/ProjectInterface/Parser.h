@@ -4,6 +4,8 @@
 #include <optional>
 #include <unordered_map>
 #include <utility>
+#include <variant>
+#include <vector>
 
 #include "Types.h"
 
@@ -14,6 +16,9 @@ MAA_PROJECT_INTERFACE_NS_BEGIN
 class Parser
 {
 public:
+    static std::vector<InterfaceData::Pretask>
+        flatten_pretask(const std::optional<std::variant<InterfaceData::Pretask, std::vector<InterfaceData::Pretask>>>& pretask);
+
     static std::optional<InterfaceData> parse_interface(const std::filesystem::path& path);
     static std::optional<InterfaceData> parse_interface(const json::value& json);
     static std::optional<Configuration> parse_config(const std::filesystem::path& path);

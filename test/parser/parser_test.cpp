@@ -53,6 +53,36 @@ int main()
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     const std::filesystem::path fixture_dir = MAAPICLI_TEST_FIXTURE_DIR;
+    {
+        InterfaceData data;
+        data.interface_version = 2;
+        data.resource.emplace_back().name = "default-resource";
+        data.controller.emplace_back().name = "default-controller";
+        data.option["valid-option"].cases.emplace_back().name = "fast";
+        data.option["valid-input"].type = InterfaceData::Option::Type::Input;
+        data.option["valid-input"].inputs.emplace_back().name = "current";
+        data.pretask = std::vector<InterfaceData::Pretask> {
+            InterfaceData::Pretask { .exec = "first-pretask", .name = "ordered-first", .option = { "valid-option", "valid-input" } }
+        };
+
+        Configuration config;
+        config.resource = "default-resource";
+        config.controller.name = "default-controller";
+        config.pretask.emplace_back();
+        config.pretask.front().name = "ordered-first";
+        config.pretask.front().option = { Configuration::Option { .name = "stale-option" },
+                                          Configuration::Option { .name = "valid-option", .value = "fast" },
+                                          Configuration::Option { .name = "valid-input",
+                                                                  .inputs = { { "stale-input", "old" }, { "current", "new" } } } };
+
+        require(!Parser::check_configuration(data, config), "an invalid pretask option should mark the configuration as changed");
+        require(config.pretask.size() == 1, "an invalid pretask option should not remove the entire pretask");
+        require(config.pretask.front().option.size() == 2, "an invalid pretask option should be removed while valid options are retained");
+        require(
+            config.pretask.front().option.back().inputs.size() == 1 && config.pretask.front().option.back().inputs.contains("current"),
+            "a stale input should be removed while current inputs are retained");
+    }
+
     auto interface = Parser::parse_interface(fixture_dir / "interface.json");
     require(interface.has_value(), "valid interface with imports should parse");
     if (interface) {

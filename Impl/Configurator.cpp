@@ -2,10 +2,12 @@
 
 #include <ranges>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "MaaFramework/Utility/MaaUtility.h"
 #include "MaaUtils/Logger.h"
 #include "MaaUtils/Platform.h"
+#include "MaaUtils/ScopeLeave.hpp"
 #include "MaaUtils/StringMisc.hpp"
 #include "ProjectInterface/Parser.h"
 
@@ -88,6 +90,11 @@ MaaMacOSInputMethod parse_macos_input_method(const std::string& method)
         return it->second;
     }
     return MaaMacOSInputMethod_None;
+}
+
+std::string pretask_identifier(const InterfaceData::Pretask& pretask)
+{
+    return pretask.name.empty() ? pretask.exec : pretask.name;
 }
 } // namespace
 
@@ -317,6 +324,45 @@ std::optional<RuntimeParam> Configurator::generate_runtime() const
     runtime.display_config.long_side = controller.display_long_side;
     runtime.display_config.raw = controller.display_raw;
 
+    for (const auto& pretask_config : Parser::flatten_pretask(data_.pretask)) {
+        if (!pretask_config.resource.empty()
+            && std::ranges::find(pretask_config.resource, config_.resource) == pretask_config.resource.end()) {
+            continue;
+        }
+        if (!pretask_config.controller.empty()
+            && std::ranges::find(pretask_config.controller, controller.name) == pretask_config.controller.end()) {
+            continue;
+        }
+
+        RuntimeParam::Pretask runtime_pretask;
+        runtime_pretask.name = pretask_identifier(pretask_config);
+        runtime_pretask.exec = MaaNS::path(pretask_config.exec);
+        runtime_pretask.args = pretask_config.args;
+        runtime_pretask.cwd = resource_dir_;
+
+        if (!pretask_config.option.empty()) {
+            auto config_pretask_iter = std::ranges::find_if(config_.pretask, [&](const auto& config_pretask) {
+                return config_pretask.name == runtime_pretask.name;
+            });
+            if (config_pretask_iter == config_.pretask.end()) {
+                LogError << "Pretask config not found" << VAR(runtime_pretask.name);
+                return std::nullopt;
+            }
+
+            json::object options;
+            std::unordered_set<std::string> expanding;
+            for (const auto& option_name : pretask_config.option) {
+                if (!append_pretask_option(option_name, *config_pretask_iter, options, expanding)) {
+                    LogError << "Failed to generate pretask option" << VAR(runtime_pretask.name) << VAR(option_name);
+                    return std::nullopt;
+                }
+            }
+            runtime_pretask.args.emplace_back(options.dumps());
+        }
+
+        runtime.pretask.emplace_back(std::move(runtime_pretask));
+    }
+
     std::vector<InterfaceData::Agent> agents = std::visit(
         [](auto&& arg) -> std::vector<InterfaceData::Agent> {
             using T = std::decay_t<decltype(arg)>;
@@ -486,6 +532,94 @@ std::optional<RuntimeParam::Task> Configurator::generate_runtime_task(const Conf
     merge_option_overrides(runtime_task, config_task.option);
 
     return runtime_task;
+}
+
+bool Configurator::append_pretask_option(
+    const std::string& option_name,
+    const Configuration::Pretask& config_pretask,
+    json::object& options,
+    std::unordered_set<std::string>& expanding) const
+{
+    if (!expanding.emplace(option_name).second) {
+        LogError << "Recursive pretask option reference" << VAR(option_name);
+        return false;
+    }
+    OnScopeLeave([&]() { expanding.erase(option_name); });
+
+    auto data_option_iter = data_.option.find(option_name);
+    if (data_option_iter == data_.option.end()) {
+        LogError << "Pretask option not found" << VAR(option_name);
+        return false;
+    }
+    const auto& data_option = data_option_iter->second;
+    if (!is_option_applicable(data_option)) {
+        return true;
+    }
+
+    auto config_option_iter = std::ranges::find_if(config_pretask.option, [&](const auto& option) { return option.name == option_name; });
+    if (config_option_iter == config_pretask.option.end()) {
+        LogError << "Pretask option config not found" << VAR(option_name);
+        return false;
+    }
+    const auto& config_option = *config_option_iter;
+
+    switch (data_option.type) {
+    case InterfaceData::Option::Type::Select:
+    case InterfaceData::Option::Type::Switch: {
+        auto data_case_iter =
+            std::ranges::find_if(data_option.cases, [&](const auto& data_case) { return data_case.name == config_option.value; });
+        if (data_case_iter == data_option.cases.end()) {
+            LogError << "Pretask option case not found" << VAR(option_name) << VAR(config_option.value);
+            return false;
+        }
+
+        options[option_name] = config_option.value;
+        for (const auto& sub_option_name : data_case_iter->option) {
+            if (!append_pretask_option(sub_option_name, config_pretask, options, expanding)) {
+                return false;
+            }
+        }
+    } break;
+
+    case InterfaceData::Option::Type::Checkbox: {
+        json::array checked_values;
+        for (const auto& value : config_option.values) {
+            auto data_case_iter = std::ranges::find_if(data_option.cases, [&](const auto& data_case) { return data_case.name == value; });
+            if (data_case_iter == data_option.cases.end()) {
+                LogError << "Pretask option case not found" << VAR(option_name) << VAR(value);
+                return false;
+            }
+            checked_values.emplace_back(value);
+        }
+        options[option_name] = std::move(checked_values);
+
+        for (const auto& value : config_option.values) {
+            auto data_case_iter = std::ranges::find_if(data_option.cases, [&](const auto& data_case) { return data_case.name == value; });
+            if (data_case_iter == data_option.cases.end()) {
+                return false;
+            }
+            for (const auto& sub_option_name : data_case_iter->option) {
+                if (!append_pretask_option(sub_option_name, config_pretask, options, expanding)) {
+                    return false;
+                }
+            }
+        }
+    } break;
+
+    case InterfaceData::Option::Type::Input: {
+        json::object input_values;
+        for (const auto& input_def : data_option.inputs) {
+            std::string value = input_def.default_;
+            if (auto value_iter = config_option.inputs.find(input_def.name); value_iter != config_option.inputs.end()) {
+                value = value_iter->second;
+            }
+            input_values[input_def.name] = std::move(value);
+        }
+        options[option_name] = std::move(input_values);
+    } break;
+    }
+
+    return true;
 }
 
 std::string Configurator::detect_system_language() const
