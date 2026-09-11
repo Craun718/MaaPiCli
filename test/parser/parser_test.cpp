@@ -60,7 +60,7 @@ int main()
         data.controller.emplace_back().name = "default-controller";
         data.option["valid-option"].cases.emplace_back().name = "fast";
         data.pretask = std::vector<InterfaceData::Pretask> {
-            InterfaceData::Pretask { .name = "ordered-first", .exec = "first-pretask", .option = { "valid-option" } }
+            InterfaceData::Pretask { .exec = "first-pretask", .name = "ordered-first", .option = { "valid-option" } }
         };
 
         Configuration config;
