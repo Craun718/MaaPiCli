@@ -32,12 +32,12 @@ MaaPiCli 当前**实现至 PI v2.5.0**。PI 语义版本与 MaaFramework release
 | v2.2.0 | `controller.attach_resource_path` 附加资源；`import` 拆分导入 PI 片段 | ✅ 支持 |
 | v2.3.0 | `checkbox` 多选；`option.controller/resource` 适用范围；全局、resource 级、controller 级 option；多级 option；`preset`；`import` 导入 preset；`focus.display` 渠道声明 | ⚠️ 部分支持：option 与 preset 可用；`focus.display` 因未处理 focus 回调而无效 |
 | v2.3.1 | 明确 option 及其子 option 的 controller/resource 适用性过滤 | ✅ 支持 |
-| v2.4.0 | 顶层 `group` 分组声明与 `task.group`；`import` 导入 group | ⚠️ 部分支持：主文件中的 `group` 与 `task.group` 可用；导入片段中的 `group` 尚未合并 |
+| v2.4.0 | 顶层 `group` 分组声明与 `task.group`；`import` 导入 group | ✅ 支持 |
 | v2.5.0 | Agent 子进程 `PI_*` 环境变量：Client/UI 版本、语言、项目版本、当前 controller/resource 等 | ✅ 支持 |
 | v2.6.0 | `resource.hash` 资源完整性校验；校验发生在 `resource.path` 加载后、`attach_resource_path` 加载前 | ❌ 未实现，忽略 `hash` |
-| v2.7.0 | `pretask` 在 Controller 启动前执行自定义程序；可把 option 当前值序列化为最后一个参数；`import` 导入 pretask | ❌ 未实现，不会执行 pretask |
-| v2.8.0 | `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ❌ 未实现。CLI 已支持 v2.3 的顶层 `global_option`，但不支持通过 `import` 合并该字段，也不渲染 `setting` 和 `hotkey` |
-| v2.8.1 | `pretask.controller/resource` 适用范围过滤 | ❌ 随 pretask 一并未实现 |
+| v2.7.0 | `pretask` 在 Controller 启动前执行自定义程序；可把 option 当前值序列化为最后一个参数；`import` 导入 pretask | ⚠️ 部分支持：主文件与导入片段中的 `pretask` 均会解析并按执行顺序合并；CLI 不会执行 pretask |
+| v2.8.0 | `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ⚠️ 部分支持：导入的 `global_option` 会合并并生效；`setting` 会解析与合并但不渲染；`hotkey` 未实现 |
+| v2.8.1 | `pretask.controller/resource` 适用范围过滤 | ❌ 未实现；相关字段可解析，但 CLI 不执行 pretask |
 | v2.9.0 | `telemetry.sentry` 匿名遥测配置：DSN、tracing、事务采样率、环境标签 | ❌ 未实现，不读取和上报遥测 |
 | v2.9.1 | `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 未实现；CLI 当前也未处理 focus 回调 |
 | v2.9.2 | `telemetry.sentry.failure_attachments_sample_rate` 失败诊断附件采样率 | ❌ 未实现 |
@@ -70,8 +70,8 @@ MaaPiCli 当前**实现至 PI v2.5.0**。PI 语义版本与 MaaFramework release
 | task 禁用态显示 | 不满足 resource/controller 约束的 task 灰显 | 直接过滤不显示 |
 | option 禁用态显示 | 不满足约束的 option 灰显 | 直接跳过不提示 |
 | `resource.hash` | 加载主资源后校验并在不匹配时警告 | 不读取 hash，不校验 |
-| `pretask` | Controller 启动前按顺序执行，失败即中止启动 | 完全忽略 |
-| `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | 完全忽略 / 未实现 |
+| `pretask` | Controller 启动前按顺序执行，失败即中止启动 | 解析并合并，但不执行 |
+| `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |
 | 密码输入 | 掩码显示、加密保存并全局脱敏 | 明文输入、明文保存 |
 
