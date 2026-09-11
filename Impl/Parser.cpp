@@ -326,6 +326,18 @@ bool Parser::check_configuration(const InterfaceData& data, Configuration& confi
                 }
             } break;
             case InterfaceData::Option::Type::Input:
+                for (auto input_it = it->inputs.begin(); input_it != it->inputs.end();) {
+                    const auto& input_name = input_it->first;
+                    const bool found = std::ranges::any_of(data_option.inputs, [&](const auto& input) { return input.name == input_name; });
+                    if (found) {
+                        ++input_it;
+                    }
+                    else {
+                        LogWarn << "Input not found in interface, removing from config" << VAR(it->name) << VAR(input_name);
+                        input_it = it->inputs.erase(input_it);
+                        erased = true;
+                    }
+                }
                 break;
             }
 
