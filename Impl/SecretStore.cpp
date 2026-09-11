@@ -299,7 +299,7 @@ std::optional<std::vector<std::uint8_t>> read_or_create_key(bool allow_create)
 
     std::ifstream input(path, std::ios::binary);
     if (input.is_open()) {
-        std::vector<std::uint8_t> key(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+        const std::vector<std::uint8_t> key { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
         if (key.size() == key_size) {
             return key;
         }
