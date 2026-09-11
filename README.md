@@ -10,7 +10,7 @@ MaaFramework 官方提供的命令行 ProjectInterface Client，用于通过终�
 
 仓库根目录的 `maafw-version.txt` 锁定本版本 MaaPiCli 使用的 MaaFramework release tag。fork、历史 tag 或 release 包中都带有这个文件，可以直接确认应使用的 runtime 版本。
 
-编译前先读取该文件，并从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载同名版本的 `MAA-<os>-<arch>-<version>.zip`。解压后把该目录传入 `CMAKE_PREFIX_PATH`，同时按平台安装 Boost 与 OpenCV 的开发配置：
+编译前先读取该文件，并从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载同名版本的 `MAA-<os>-<arch>-<version>.zip`。解压后把该目录传入 `CMAKE_PREFIX_PATH`，同时按平台安装 Boost 与 OpenCV 的开发配置。Linux 还需要安装 `libssl-dev` 或发行版等价的 OpenSSL 开发包。
 
 ```bash
 maafw_version="$(cat maafw-version.txt)"
@@ -71,7 +71,6 @@ MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask` 和 v
 | option 禁用态显示 | 不满足约束的 option 灰显 | 直接跳过不提示 |
 | `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |
-| 密码输入 | 掩码显示、加密保存并全局脱敏 | 明文输入、明文保存 |
 
 ## 用法
 
