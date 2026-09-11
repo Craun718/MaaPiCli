@@ -1,0 +1,50 @@
+{
+    "interface_version": 2,
+    "controller": [
+        {
+            "name": "default-controller",
+            "type": "Adb"
+        }
+    ],
+    "resource": [
+        {
+            "name": "default-resource",
+            "path": [ "resource" ]
+        }
+    ],
+    "agent": [
+        {
+            "child_exec": "agent-server"
+        }
+    ],
+    "import": [ "first.json", "second.json" ],
+    "task": [
+        {
+            "name": "main-task",
+            "entry": "MainTask",
+            "option": [ "shared-option", "first-import-option" ],
+            "group": [ "main-group", "first-only-group" ]
+        }
+    ],
+    "option": {
+        "shared-option": {
+            "type": "select",
+            "cases": [ { "name": "shared-case", "label": "main-label" } ]
+        }
+    },
+    "global_option": [ "first-global", "shared-global" ],
+    "group": [
+        { "name": "main-group" },
+        { "name": "first-group" }
+    ],
+    "pretask": [
+        { "name": "main-first", "exec": "main-first" },
+        { "name": "main-second", "exec": "main-second" }
+    ],
+    "preset": [
+        { "name": "main-preset", "task": [] }
+    ],
+    "setting": [
+        { "name": "main-setting", "option": [ "main-setting-option" ] }
+    ]
+}

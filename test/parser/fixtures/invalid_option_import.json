@@ -1,0 +1,9 @@
+{
+    "task": [
+        {
+            "name": "invalid-task",
+            "entry": "InvalidTask",
+            "option": [ "missing-option" ]
+        }
+    ]
+}

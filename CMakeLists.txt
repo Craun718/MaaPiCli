@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.28)
 project(MaaPiCli VERSION 0.1.0 LANGUAGES CXX)
 
 option(MaaPiCli_BUILD_EXECUTABLE "build the MaaPiCli executable" ON)
+option(MaaPiCli_BUILD_TESTS "build the MaaPiCli tests" OFF)
 
 find_package(Boost REQUIRED CONFIG COMPONENTS system regex)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
@@ -90,4 +91,19 @@ if(MaaPiCli_BUILD_EXECUTABLE)
     if(WIN32)
         install(FILES $<TARGET_PDB_FILE:MaaPiCli> DESTINATION symbol OPTIONAL)
     endif()
+endif()
+
+if(MaaPiCli_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(MaaPiCliParserTest test/parser/parser_test.cpp)
+    target_compile_features(MaaPiCliParserTest PRIVATE cxx_std_20)
+    target_link_libraries(MaaPiCliParserTest PRIVATE MaaPiCli::Core)
+    target_compile_definitions(
+        MaaPiCliParserTest PRIVATE MAAPICLI_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/parser/fixtures")
+
+    add_test(NAME MaaPiCliParserTest COMMAND MaaPiCliParserTest)
+    set_tests_properties(
+        MaaPiCliParserTest
+        PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
 endif()
