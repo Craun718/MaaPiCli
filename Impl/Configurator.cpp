@@ -331,7 +331,7 @@ std::optional<RuntimeParam> Configurator::generate_runtime() const
 
     // v2.5.0: prepare PI_* env vars
     std::unordered_map<std::string, std::string> pi_env;
-    pi_env["PI_INTERFACE_VERSION"] = "v2.5.0";
+    pi_env["PI_INTERFACE_VERSION"] = "v2.6.0";
     pi_env["PI_CLIENT_NAME"] = "MaaPiCli";
     pi_env["PI_CLIENT_VERSION"] = MaaVersion();
     pi_env["PI_CLIENT_LANGUAGE"] = detect_system_language();

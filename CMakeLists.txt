@@ -5,7 +5,8 @@ project(MaaPiCli VERSION 0.1.0 LANGUAGES CXX)
 option(MaaPiCli_BUILD_EXECUTABLE "build the MaaPiCli executable" ON)
 option(MaaPiCli_BUILD_TESTS "build the MaaPiCli tests" OFF)
 
-find_package(Boost REQUIRED CONFIG COMPONENTS system regex process)
+find_package(Boost REQUIRED CONFIG COMPONENTS system regex)
+find_package(boost_process CONFIG REQUIRED)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(MaaFramework CONFIG REQUIRED)
 

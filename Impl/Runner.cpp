@@ -231,8 +231,8 @@ bool Runner::run(const RuntimeParam& param)
         }
 
         LogInfo << "Start Agent" << VAR(agent_param.child_exec) << VAR(os_args) << VAR(agent_param.cwd);
-        auto& agent_child =
-            agent_children.emplace_back(agent_param.child_exec.string(), os_args, boost::process::v1::start_dir = agent_param.cwd.string());
+        auto& agent_child = agent_children.emplace_back(
+            agent_param.child_exec.native(), os_args, boost::process::v1::start_dir = agent_param.cwd.native());
         if (!agent_child.valid()) {
             LogError << "Failed to start agent process" << VAR(agent_param.child_exec) << VAR(args) << VAR(agent_param.cwd);
             return false;
