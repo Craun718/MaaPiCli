@@ -3,6 +3,8 @@
 #include <format>
 #include <iostream>
 
+#include <boost/process/v1.hpp>
+
 #include <meojson/json.hpp>
 
 #include "MaaAgentClient/MaaAgentClientAPI.h"
@@ -15,6 +17,7 @@
 #include "MaaUtils/Logger.h"
 #include "MaaUtils/Platform.h"
 #include "MaaUtils/ScopeLeave.hpp"
+#include "MaaUtils/StringMisc.hpp"
 
 MAA_PROJECT_INTERFACE_NS_BEGIN
 
@@ -158,9 +161,41 @@ bool Runner::run(const RuntimeParam& param)
     }
 
     MaaId cid = controller_handle->post_connection();
-    MaaId rid = 0;
-    for (const auto& path : param.resource_path) {
-        rid = resource_handle->post_bundle(path);
+    const auto primary_count = std::min(param.primary_resource_count, param.resource_path.size());
+    const auto primary_end = param.resource_path.begin() + static_cast<std::ptrdiff_t>(primary_count);
+
+    auto post_resources = [resource_handle](const auto& paths) {
+        MaaId rid = 0;
+        for (const auto& path : paths) {
+            rid = resource_handle->post_bundle(path);
+        }
+        return rid;
+    };
+
+    MaaId rid = post_resources(std::ranges::subrange(param.resource_path.begin(), primary_end));
+    if (rid != 0) {
+        if (MaaStatus_Failed == resource_handle->wait(rid)) {
+            LogError << "Failed to load resource";
+            return false;
+        }
+    }
+
+    // PI v2.6.0: 校验值基于 resource.path，必须在 attach_resource_path 之前获取。
+    if (!param.resource_hash.empty()) {
+        auto expected_hash = param.resource_hash;
+        auto actual_hash = resource_handle->get_hash();
+        tolowers_(expected_hash);
+        tolowers_(actual_hash);
+
+        if (expected_hash != actual_hash) {
+            LogWarn << "Resource hash mismatch" << VAR(param.resource_hash) << VAR(actual_hash);
+        }
+    }
+
+    rid = post_resources(std::ranges::subrange(primary_end, param.resource_path.end()));
+    if (rid != 0 && MaaStatus_Failed == resource_handle->wait(rid)) {
+        LogError << "Failed to load resource";
+        return false;
     }
 
     tasker_handle->bind_controller(controller_handle);
@@ -177,7 +212,7 @@ bool Runner::run(const RuntimeParam& param)
     }
 
     std::vector<MaaAgentClient*> agents;
-    std::vector<boost::process::child> agent_children;
+    std::vector<boost::process::v1::child> agent_children;
     for (const auto& agent_param : param.agent) {
         MaaAgentClient* agent = MaaAgentClientCreateV2(nullptr);
         MaaAgentClientBindResource(agent, resource_handle);
@@ -196,7 +231,8 @@ bool Runner::run(const RuntimeParam& param)
         }
 
         LogInfo << "Start Agent" << VAR(agent_param.child_exec) << VAR(os_args) << VAR(agent_param.cwd);
-        auto& agent_child = agent_children.emplace_back(agent_param.child_exec, os_args, boost::process::start_dir = agent_param.cwd);
+        auto& agent_child =
+            agent_children.emplace_back(agent_param.child_exec.string(), os_args, boost::process::v1::start_dir = agent_param.cwd.string());
         if (!agent_child.valid()) {
             LogError << "Failed to start agent process" << VAR(agent_param.child_exec) << VAR(args) << VAR(agent_param.cwd);
             return false;

@@ -5,7 +5,7 @@ project(MaaPiCli VERSION 0.1.0 LANGUAGES CXX)
 option(MaaPiCli_BUILD_EXECUTABLE "build the MaaPiCli executable" ON)
 option(MaaPiCli_BUILD_TESTS "build the MaaPiCli tests" OFF)
 
-find_package(Boost REQUIRED CONFIG COMPONENTS system regex)
+find_package(Boost REQUIRED CONFIG COMPONENTS system regex process)
 find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
 find_package(MaaFramework CONFIG REQUIRED)
 
@@ -37,6 +37,7 @@ target_link_libraries(
            MaaFramework::MaaUtils
            Boost::system
            Boost::regex
+           Boost::process
            ${OpenCV_LIBS})
 
 if(LINUX)

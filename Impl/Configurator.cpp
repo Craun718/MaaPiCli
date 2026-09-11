@@ -170,6 +170,8 @@ std::optional<RuntimeParam> Configurator::generate_runtime() const
         LogWarn << "No resource to load";
         return std::nullopt;
     }
+    runtime.primary_resource_count = runtime.resource_path.size();
+    runtime.resource_hash = resource_iter->hash;
 
     // Find current controller for attach_resource_path
 

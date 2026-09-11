@@ -76,6 +76,10 @@ int main()
             { "first-global", "shared-global", "first-only-global", "second-global", "second-only-global" },
             "global options should append and retain the first occurrence");
 
+        require(
+            interface->resource.size() == 1 && interface->resource.front().hash == "Expected-Resource-Hash",
+            "resource hash should parse");
+
         same_names(
             names(interface->group, &InterfaceData::Group::name),
             { "main-group", "first-group", "first-only-group", "second-only-group" },
