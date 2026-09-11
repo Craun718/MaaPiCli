@@ -2,10 +2,16 @@
 
 #include <format>
 #include <iostream>
+#include <memory>
+#include <optional>
+#include <utility>
 
-#include <boost/process/v1/child.hpp>
-#include <boost/process/v1/environment.hpp>
-#include <boost/process/v1/start_dir.hpp>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 #include <meojson/json.hpp>
 
@@ -22,7 +28,39 @@
 
 MAA_PROJECT_INTERFACE_NS_BEGIN
 
+namespace
+{
+
 #ifdef _WIN32
+std::wstring quote_argument(const std::wstring& arg)
+{
+    if (arg.empty() || arg.find_first_of(L" \t\"") == std::wstring::npos) {
+        return arg;
+    }
+
+    std::wstring quoted;
+    quoted.push_back(L'"');
+    size_t backslashes = 0;
+    for (wchar_t ch : arg) {
+        if (ch == L'\\') {
+            ++backslashes;
+            continue;
+        }
+        if (ch == L'"') {
+            quoted.append(backslashes * 2 + 1, L'\\');
+            quoted.push_back(L'"');
+        }
+        else {
+            quoted.append(backslashes, L'\\');
+            quoted.push_back(ch);
+        }
+        backslashes = 0;
+    }
+    quoted.append(backslashes * 2, L'\\');
+    quoted.push_back(L'"');
+    return quoted;
+}
+
 std::vector<std::wstring> conv_args(const std::vector<std::string>& args)
 {
     std::vector<std::wstring> wargs;
@@ -31,12 +69,173 @@ std::vector<std::wstring> conv_args(const std::vector<std::string>& args)
     }
     return wargs;
 }
+
+class AgentProcess
+{
+public:
+    explicit AgentProcess(HANDLE process)
+        : process_(process)
+    {
+    }
+
+    AgentProcess(AgentProcess&& other) noexcept
+        : process_(std::exchange(other.process_, INVALID_HANDLE_VALUE))
+    {
+    }
+
+    AgentProcess& operator=(AgentProcess&& other) noexcept
+    {
+        if (this != &other) {
+            close();
+            process_ = std::exchange(other.process_, INVALID_HANDLE_VALUE);
+        }
+        return *this;
+    }
+
+    ~AgentProcess() { close(); }
+
+    bool valid() const { return process_ != INVALID_HANDLE_VALUE && process_ != nullptr; }
+
+private:
+    void close()
+    {
+        if (!valid()) {
+            return;
+        }
+
+        TerminateProcess(process_, 1);
+        WaitForSingleObject(process_, INFINITE);
+        CloseHandle(process_);
+        process_ = INVALID_HANDLE_VALUE;
+    }
+
+    HANDLE process_ = INVALID_HANDLE_VALUE;
+};
+
+std::unique_ptr<AgentProcess>
+    spawn_agent(const std::filesystem::path& executable, const std::vector<std::wstring>& args, const std::filesystem::path& cwd)
+{
+    std::wstring command_line = quote_argument(executable.native());
+    for (const auto& arg : args) {
+        command_line.push_back(L' ');
+        command_line += quote_argument(arg);
+    }
+
+    STARTUPINFOW startup_info = { .cb = sizeof(startup_info) };
+    PROCESS_INFORMATION process_info = { };
+    if (!CreateProcessW(
+            executable.native().c_str(),
+            command_line.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            0,
+            nullptr,
+            cwd.native().c_str(),
+            &startup_info,
+            &process_info)) {
+        return nullptr;
+    }
+
+    CloseHandle(process_info.hThread);
+    return std::make_unique<AgentProcess>(process_info.hProcess);
+}
 #else
+class AgentProcess
+{
+public:
+    explicit AgentProcess(pid_t pid)
+        : pid_(pid)
+    {
+    }
+
+    AgentProcess(AgentProcess&& other) noexcept
+        : pid_(std::exchange(other.pid_, 0))
+    {
+    }
+
+    AgentProcess& operator=(AgentProcess&& other) noexcept
+    {
+        if (this != &other) {
+            close();
+            pid_ = std::exchange(other.pid_, 0);
+        }
+        return *this;
+    }
+
+    ~AgentProcess() { close(); }
+
+    bool valid() const { return pid_ > 0; }
+
+private:
+    void close()
+    {
+        if (!valid()) {
+            return;
+        }
+
+        kill(pid_, SIGTERM);
+        waitpid(pid_, nullptr, 0);
+        pid_ = 0;
+    }
+
+    pid_t pid_ = 0;
+};
+
+std::unique_ptr<AgentProcess>
+    spawn_agent(const std::filesystem::path& executable, const std::vector<std::string>& args, const std::filesystem::path& cwd)
+{
+    std::vector<char*> argv;
+    argv.emplace_back(const_cast<char*>(executable.native().c_str()));
+    for (const auto& arg : args) {
+        argv.emplace_back(const_cast<char*>(arg.c_str()));
+    }
+    argv.emplace_back(nullptr);
+
+    int exec_failed[2];
+    if (pipe(exec_failed) != 0) {
+        return nullptr;
+    }
+    if (fcntl(exec_failed[1], F_SETFD, FD_CLOEXEC) == -1) {
+        close(exec_failed[0]);
+        close(exec_failed[1]);
+        return nullptr;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(exec_failed[0]);
+        if (chdir(cwd.native().c_str()) != 0) {
+            _exit(127);
+        }
+        execv(executable.native().c_str(), argv.data());
+        char failed = 1;
+        std::ignore = write(exec_failed[1], &failed, sizeof(failed));
+        _exit(127);
+    }
+
+    close(exec_failed[1]);
+    char failed = 0;
+    ssize_t size = read(exec_failed[0], &failed, sizeof(failed));
+    close(exec_failed[0]);
+
+    if (pid <= 0 || (size == sizeof(failed) && failed != 0)) {
+        if (pid > 0) {
+            waitpid(pid, nullptr, 0);
+        }
+        return nullptr;
+    }
+
+    return std::make_unique<AgentProcess>(pid);
+}
+#endif
+
 std::vector<std::string> conv_args(const std::vector<std::string>& args)
 {
     return args;
 }
-#endif
+
+}
 
 RuntimeParam::AdbParam reconfig_adb(const RuntimeParam::AdbParam& raw)
 {
@@ -213,7 +412,7 @@ bool Runner::run(const RuntimeParam& param)
     }
 
     std::vector<MaaAgentClient*> agents;
-    std::vector<boost::process::v1::child> agent_children;
+    std::vector<std::unique_ptr<AgentProcess>> agent_children;
     for (const auto& agent_param : param.agent) {
         MaaAgentClient* agent = MaaAgentClientCreateV2(nullptr);
         MaaAgentClientBindResource(agent, resource_handle);
@@ -228,16 +427,20 @@ bool Runner::run(const RuntimeParam& param)
 
         // v2.5.0: set PI_* environment variables in current process (child inherits them)
         for (const auto& [key, val] : agent_param.env_vars) {
-            boost::this_process::environment()[key] = val;
+#ifdef _WIN32
+            SetEnvironmentVariableW(to_u16(key).c_str(), to_u16(val).c_str());
+#else
+            setenv(key.c_str(), val.c_str(), 1);
+#endif
         }
 
         LogInfo << "Start Agent" << VAR(agent_param.child_exec) << VAR(os_args) << VAR(agent_param.cwd);
-        auto& agent_child =
-            agent_children.emplace_back(agent_param.child_exec.native(), os_args, boost::process::v1::start_dir = agent_param.cwd.native());
-        if (!agent_child.valid()) {
+        auto agent_child = spawn_agent(agent_param.child_exec, os_args, agent_param.cwd);
+        if (!agent_child || !agent_child->valid()) {
             LogError << "Failed to start agent process" << VAR(agent_param.child_exec) << VAR(args) << VAR(agent_param.cwd);
             return false;
         }
+        agent_children.emplace_back(std::move(agent_child));
 
         bool connected = MaaAgentClientConnect(agent);
         if (!connected) {
