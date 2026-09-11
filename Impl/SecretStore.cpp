@@ -142,7 +142,7 @@ DATA_BLOB entropy_blob(const std::string& context)
 std::optional<std::vector<std::uint8_t>> protect(const std::string& context, const std::vector<std::uint8_t>& bytes)
 {
     DATA_BLOB input { };
-    const auto entropy = entropy_blob(context);
+    auto entropy = entropy_blob(context);
     input.cbData = static_cast<DWORD>(bytes.size());
     input.pbData = reinterpret_cast<BYTE*>(const_cast<std::uint8_t*>(bytes.data()));
 
@@ -159,7 +159,7 @@ std::optional<std::vector<std::uint8_t>> protect(const std::string& context, con
 std::optional<std::vector<std::uint8_t>> unprotect(const std::string& context, const std::vector<std::uint8_t>& bytes)
 {
     DATA_BLOB input { };
-    const auto entropy = entropy_blob(context);
+    auto entropy = entropy_blob(context);
     input.cbData = static_cast<DWORD>(bytes.size());
     input.pbData = reinterpret_cast<BYTE*>(const_cast<std::uint8_t*>(bytes.data()));
 
