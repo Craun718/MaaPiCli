@@ -158,22 +158,32 @@ runs:
           shell: bash
           working-directory: ${{ github.workspace }}/MaaDeps
           env:
-              PYTHONPATH: ${{ github.workspace }}/MaaDeps
               DEPS_ARCH: ${{ steps.resolve.outputs.deps-arch }}
           run: |
               ln -s "$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/x-tools" x-tools
-              python3 -c 'import os, subprocess
-              from pathlib import Path
-              from maadeps import vcpkg
-              triplet = "maa-" + os.environ["DEPS_ARCH"] + "-linux"
-              vcpkg.bootstrap(triplet)
-              vcpkg_root = Path(vcpkg.root)
-              subprocess.check_call([
-                  str(vcpkg_root / "vcpkg"),
-                  "install",
-                  "openssl:" + triplet,
-                  "--x-install-root=" + str(vcpkg_root / "installed"),
-              ], cwd=os.environ["GITHUB_WORKSPACE"])'
+
+              triplet="maa-$DEPS_ARCH-linux"
+              vcpkg_root="$PWD/vcpkg"
+              export VCPKG_OVERLAY_TRIPLETS="$PWD/vcpkg-overlay/triplets"
+              export VCPKG_OVERLAY_PORTS="$PWD/vcpkg-overlay/ports"
+
+              if [[ ! -f "$vcpkg_root/vcpkg" ]]; then
+                  if [[ ! -f "$vcpkg_root/bootstrap_vcpkg.bat" ]]; then
+                      git submodule update --init --recommend-shallow vcpkg
+                  fi
+                  "$vcpkg_root/bootstrap-vcpkg.sh" -disableMetrics
+              fi
+
+              # Install in classic mode; MaaDeps root contains a manifest.
+              (
+                  cd "$GITHUB_WORKSPACE"
+                  "$vcpkg_root/vcpkg" install \
+                    "openssl:$triplet" \
+                    --x-install-root="$vcpkg_root/installed" \
+                    --overlay-triplets="$VCPKG_OVERLAY_TRIPLETS" \
+                    --overlay-ports="$VCPKG_OVERLAY_PORTS"
+              )
+
               rm -rf vcpkg/buildtrees vcpkg/packages vcpkg/downloads
 
         - name: Build Windows MaaUtils import library
