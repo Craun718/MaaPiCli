@@ -35,7 +35,11 @@ namespace
 #ifdef _WIN32
 std::wstring quote_argument(const std::wstring& arg)
 {
-    if (arg.empty() || arg.find_first_of(L" \t\"") == std::wstring::npos) {
+    if (arg.empty()) {
+        return L"\"\"";
+    }
+
+    if (arg.find_first_of(L" \t\"") == std::wstring::npos) {
         return arg;
     }
 
