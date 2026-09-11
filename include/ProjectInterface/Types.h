@@ -367,6 +367,16 @@ struct ImportData
 
 struct Configuration
 {
+    struct Option;
+
+    struct Pretask
+    {
+        std::string name;
+        std::vector<Option> option;
+
+        MEO_JSONIZATION(name, MEO_OPT option);
+    };
+
     struct Controller
     {
         std::string name;
@@ -463,6 +473,7 @@ struct Configuration
     std::vector<Option> global_option;     // v2.3.0
     std::vector<Option> resource_option;   // v2.3.0
     std::vector<Option> controller_option; // v2.3.0
+    std::vector<Pretask> pretask;
 
     MEO_JSONIZATION(
         controller,
@@ -476,7 +487,8 @@ struct Configuration
         task,
         MEO_OPT global_option,
         MEO_OPT resource_option,
-        MEO_OPT controller_option);
+        MEO_OPT controller_option,
+        MEO_OPT pretask);
 };
 
 struct RuntimeParam
@@ -550,12 +562,21 @@ struct RuntimeParam
         std::unordered_map<std::string, std::string> env_vars; // v2.5.0: PI_* env vars
     };
 
+    struct Pretask
+    {
+        std::string name;
+        std::filesystem::path exec;
+        std::vector<std::string> args;
+        std::filesystem::path cwd;
+    };
+
     std::variant<std::monostate, AdbParam, Win32Param, MacOSParam, PlayCoverParam, GamepadParam, WlRootsParam> controller_param;
     std::vector<std::filesystem::path> resource_path;
     size_t primary_resource_count = 0; // resource.path 加载数量，加载完成后、附加资源前校验 hash
     std::string resource_hash;
 
     std::vector<Task> task;
+    std::vector<Pretask> pretask;
 
     std::vector<Agent> agent;
     DisplayConfig display_config;

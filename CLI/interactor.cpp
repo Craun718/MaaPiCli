@@ -20,6 +20,7 @@
 #include "MaaUtils/Encoding.h"
 #include "MaaUtils/Logger.h"
 #include "MaaUtils/Platform.h"
+#include "ProjectInterface/Parser.h"
 #include "ProjectInterface/Runner.h"
 
 static bool s_eof = false;
@@ -298,6 +299,11 @@ bool Interactor::run()
         LogError << "Config is invalid";
         return false;
     }
+
+    if (!ensure_pretask_options()) {
+        return false;
+    }
+    config_.save(user_path_);
 
     auto runtime = config_.generate_runtime();
     if (!runtime) {
@@ -1750,6 +1756,121 @@ bool Interactor::check_validity()
 
             if (controller_iter != config_.interface_data().controller.end()) {
                 select_gamepad(controller_iter->gamepad);
+            }
+        }
+    }
+
+    return true;
+}
+
+bool Interactor::ensure_pretask_options()
+{
+    using namespace MAA_PROJECT_INTERFACE_NS;
+
+    const auto& current_resource = config_.configuration().resource;
+    const auto& current_controller = config_.configuration().controller.name;
+
+    for (const auto& data_pretask : Parser::flatten_pretask(config_.interface_data().pretask)) {
+        if (!data_pretask.resource.empty() && std::ranges::find(data_pretask.resource, current_resource) == data_pretask.resource.end()) {
+            continue;
+        }
+        if (!data_pretask.controller.empty()
+            && std::ranges::find(data_pretask.controller, current_controller) == data_pretask.controller.end()) {
+            continue;
+        }
+        if (data_pretask.option.empty()) {
+            continue;
+        }
+
+        const std::string identifier = data_pretask.name.empty() ? data_pretask.exec : data_pretask.name;
+        const std::string display_name = get_display_name(identifier, data_pretask.label);
+        auto& config_pretasks = config_.configuration().pretask;
+        auto config_pretask_iter =
+            std::ranges::find_if(config_pretasks, [&](const auto& config_pretask) { return config_pretask.name == identifier; });
+
+        if (config_pretask_iter == config_pretasks.end()) {
+            Configuration::Pretask config_pretask;
+            config_pretask.name = identifier;
+            for (const auto& option_name : data_pretask.option) {
+                if (!process_option(option_name, display_name, config_pretask.option)) {
+                    return false;
+                }
+            }
+            config_pretasks.emplace_back(std::move(config_pretask));
+            continue;
+        }
+
+        for (const auto& option_name : data_pretask.option) {
+            if (!ensure_pretask_option_tree(option_name, display_name, *config_pretask_iter)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool Interactor::ensure_pretask_option_tree(
+    const std::string& option_name,
+    const std::string& pretask_display_name,
+    MAA_PROJECT_INTERFACE_NS::Configuration::Pretask& config_pretask)
+{
+    using namespace MAA_PROJECT_INTERFACE_NS;
+
+    auto config_option_iter =
+        std::ranges::find_if(config_pretask.option, [&](const auto& config_option) { return config_option.name == option_name; });
+    if (config_option_iter == config_pretask.option.end()) {
+        return process_option(option_name, pretask_display_name, config_pretask.option);
+    }
+
+    auto data_option_iter = config_.interface_data().option.find(option_name);
+    if (data_option_iter == config_.interface_data().option.end()) {
+        LogError << "Option not found" << VAR(option_name);
+        return false;
+    }
+
+    const auto& data_option = data_option_iter->second;
+    if (!data_option.controller.empty()
+        && std::ranges::find(data_option.controller, config_.configuration().controller.name) == data_option.controller.end()) {
+        return true;
+    }
+    if (!data_option.resource.empty()
+        && std::ranges::find(data_option.resource, config_.configuration().resource) == data_option.resource.end()) {
+        return true;
+    }
+
+    std::vector<std::vector<std::string>> active_option_groups;
+    switch (data_option.type) {
+    case InterfaceData::Option::Type::Select:
+    case InterfaceData::Option::Type::Switch: {
+        auto case_iter =
+            std::ranges::find_if(data_option.cases, [&](const auto& data_case) { return data_case.name == config_option_iter->value; });
+        if (case_iter == data_option.cases.end()) {
+            LogError << "Option case not found" << VAR(option_name) << VAR(config_option_iter->value);
+            return false;
+        }
+        active_option_groups.emplace_back(case_iter->option);
+    } break;
+
+    case InterfaceData::Option::Type::Checkbox: {
+        for (const auto& value : config_option_iter->values) {
+            auto case_iter = std::ranges::find_if(data_option.cases, [&](const auto& data_case) { return data_case.name == value; });
+            if (case_iter == data_option.cases.end()) {
+                LogError << "Option case not found" << VAR(option_name) << VAR(value);
+                return false;
+            }
+            active_option_groups.emplace_back(case_iter->option);
+        }
+    } break;
+
+    case InterfaceData::Option::Type::Input:
+        break;
+    }
+
+    for (const auto& active_options : active_option_groups) {
+        for (const auto& active_option : active_options) {
+            if (!ensure_pretask_option_tree(active_option, pretask_display_name, config_pretask)) {
+                return false;
             }
         }
     }

@@ -44,6 +44,13 @@ private:
         std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
         const std::string& level_label);
 
+    bool ensure_pretask_options();
+
+    bool ensure_pretask_option_tree(
+        const std::string& option_name,
+        const std::string& pretask_display_name,
+        MAA_PROJECT_INTERFACE_NS::Configuration::Pretask& config_pretask);
+
     // Process option and its nested sub-options recursively
     // Returns false if option processing failed (e.g., option not found, invalid configuration)
     bool process_option(

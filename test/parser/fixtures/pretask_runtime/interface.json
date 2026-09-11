@@ -1,0 +1,67 @@
+{
+    "interface_version": 2,
+    "controller": [
+        { "name": "default-controller", "type": "Adb" }
+    ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] }
+    ],
+    "task": [
+        { "name": "main-task", "entry": "MainTask" }
+    ],
+    "option": {
+        "policy": {
+            "type": "select",
+            "cases": [
+                { "name": "fast", "option": [ "credentials" ] },
+                { "name": "safe" }
+            ]
+        },
+        "flags": {
+            "type": "checkbox",
+            "cases": [
+                { "name": "alpha" },
+                { "name": "beta" }
+            ]
+        },
+        "credentials": {
+            "type": "input",
+            "inputs": [
+                { "name": "token", "default": "default-token" }
+            ]
+        },
+        "hidden-option": {
+            "type": "input",
+            "controller": [ "unsupported-controller" ],
+            "inputs": [
+                { "name": "value", "default": "hidden" }
+            ]
+        }
+    },
+    "pretask": [
+        {
+            "name": "ordered-first",
+            "exec": "first-pretask",
+            "args": [ "before", "--mode" ],
+            "resource": [ "default-resource" ],
+            "controller": [ "default-controller" ],
+            "option": [ "policy", "flags", "hidden-option" ]
+        },
+        {
+            "name": "ordered-second",
+            "exec": "second-pretask",
+            "resource": [ "default-resource" ],
+            "controller": [ "default-controller" ]
+        },
+        {
+            "name": "other-resource-pretask",
+            "exec": "other-resource-pretask",
+            "resource": [ "other-resource" ]
+        },
+        {
+            "name": "other-controller-pretask",
+            "exec": "other-controller-pretask",
+            "controller": [ "unsupported-controller" ]
+        }
+    ]
+}

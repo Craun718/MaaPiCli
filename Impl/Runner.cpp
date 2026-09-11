@@ -7,6 +7,7 @@
 #include <utility>
 
 #ifndef _WIN32
+#include <cerrno>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/wait.h>
@@ -68,6 +69,39 @@ std::vector<std::wstring> conv_args(const std::vector<std::string>& args)
         wargs.emplace_back(to_u16(arg));
     }
     return wargs;
+}
+
+bool run_pretask_process(const RuntimeParam::Pretask& pretask)
+{
+    std::wstring command_line = quote_argument(pretask.exec.native());
+    for (const auto& arg : conv_args(pretask.args)) {
+        command_line.push_back(L' ');
+        command_line += quote_argument(arg);
+    }
+
+    STARTUPINFOW startup_info = { .cb = sizeof(startup_info) };
+    PROCESS_INFORMATION process_info = { };
+    if (!CreateProcessW(
+            nullptr,
+            command_line.data(),
+            nullptr,
+            nullptr,
+            TRUE,
+            0,
+            nullptr,
+            pretask.cwd.native().c_str(),
+            &startup_info,
+            &process_info)) {
+        return false;
+    }
+
+    CloseHandle(process_info.hThread);
+    WaitForSingleObject(process_info.hProcess, INFINITE);
+
+    DWORD exit_code = 1;
+    bool success = GetExitCodeProcess(process_info.hProcess, &exit_code) && exit_code == 0;
+    CloseHandle(process_info.hProcess);
+    return success;
 }
 
 class AgentProcess
@@ -233,6 +267,57 @@ std::vector<std::string> conv_args(const std::vector<std::string>& args)
 {
     return args;
 }
+
+bool run_pretask_process(const RuntimeParam::Pretask& pretask)
+{
+    std::vector<char*> argv;
+    argv.emplace_back(const_cast<char*>(pretask.exec.native().c_str()));
+    for (const auto& arg : pretask.args) {
+        argv.emplace_back(const_cast<char*>(arg.c_str()));
+    }
+    argv.emplace_back(nullptr);
+
+    int exec_failed[2];
+    if (pipe(exec_failed) != 0) {
+        return false;
+    }
+    if (fcntl(exec_failed[1], F_SETFD, FD_CLOEXEC) == -1) {
+        close(exec_failed[0]);
+        close(exec_failed[1]);
+        return false;
+    }
+
+    pid_t pid = fork();
+    if (pid == 0) {
+        close(exec_failed[0]);
+        if (chdir(pretask.cwd.native().c_str()) != 0) {
+            _exit(127);
+        }
+        execvp(pretask.exec.native().c_str(), argv.data());
+        char failed = 1;
+        std::ignore = write(exec_failed[1], &failed, sizeof(failed));
+        _exit(127);
+    }
+
+    close(exec_failed[1]);
+    char failed = 0;
+    ssize_t size = read(exec_failed[0], &failed, sizeof(failed));
+    close(exec_failed[0]);
+
+    if (pid <= 0 || (size == sizeof(failed) && failed != 0)) {
+        if (pid > 0) {
+            int status = 0;
+            while (waitpid(pid, &status, 0) == -1 && errno == EINTR) {
+            }
+        }
+        return false;
+    }
+
+    int status = 0;
+    while (waitpid(pid, &status, 0) == -1 && errno == EINTR) {
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
 #endif
 
 }
@@ -275,6 +360,10 @@ RuntimeParam::AdbParam reconfig_adb(const RuntimeParam::AdbParam& raw)
 
 bool Runner::run(const RuntimeParam& param)
 {
+    if (!run_pretasks(param.pretask)) {
+        return false;
+    }
+
     MaaTasker* tasker_handle = MaaTaskerCreate();
 
     MaaController* controller_handle = nullptr;
@@ -461,6 +550,19 @@ bool Runner::run(const RuntimeParam& param)
     for (auto* agent : agents) {
         MaaAgentClientDisconnect(agent);
         MaaAgentClientDestroy(agent);
+    }
+
+    return true;
+}
+
+bool Runner::run_pretasks(const std::vector<RuntimeParam::Pretask>& pretasks)
+{
+    for (const auto& pretask : pretasks) {
+        LogInfo << "Run pretask" << VAR(pretask.name) << VAR(pretask.exec) << VAR(pretask.cwd);
+        if (!run_pretask_process(pretask)) {
+            LogError << "Pretask failed" << VAR(pretask.name) << VAR(pretask.exec);
+            return false;
+        }
     }
 
     return true;

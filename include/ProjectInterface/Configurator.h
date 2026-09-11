@@ -1,7 +1,9 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string_view>
+#include <unordered_set>
 
 #include "Types.h"
 
@@ -39,6 +41,11 @@ private:
 
     bool is_option_applicable(const InterfaceData::Option& opt) const;
     void merge_option_overrides(RuntimeParam::Task& runtime_task, const std::vector<Configuration::Option>& config_options) const;
+    bool append_pretask_option(
+        const std::string& option_name,
+        const Configuration::Pretask& config_pretask,
+        json::object& options,
+        std::unordered_set<std::string>& expanding) const;
 
     void load_translations();
     std::string detect_system_language() const;

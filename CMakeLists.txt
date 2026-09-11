@@ -106,4 +106,16 @@ if(MaaPiCli_BUILD_TESTS)
     set_tests_properties(
         MaaPiCliParserTest
         PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
+
+    add_executable(MaaPiCliPretaskTest test/pretask/pretask_test.cpp)
+    target_compile_features(MaaPiCliPretaskTest PRIVATE cxx_std_20)
+    target_link_libraries(MaaPiCliPretaskTest PRIVATE MaaPiCli::Core)
+    target_compile_definitions(
+        MaaPiCliPretaskTest
+        PRIVATE MAAPICLI_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/parser/fixtures")
+
+    add_test(NAME MaaPiCliPretaskTest COMMAND MaaPiCliPretaskTest)
+    set_tests_properties(
+        MaaPiCliPretaskTest
+        PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
 endif()
