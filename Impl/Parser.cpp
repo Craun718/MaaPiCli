@@ -347,13 +347,7 @@ bool Parser::check_configuration(const InterfaceData& data, Configuration& confi
     };
 
     for (auto pretask_iter = config.pretask.begin(); pretask_iter != config.pretask.end();) {
-        const size_t option_count = pretask_iter->option.size();
         check_option_list(pretask_iter->option);
-        if (pretask_iter->option.size() != option_count) {
-            pretask_iter = config.pretask.erase(pretask_iter);
-            erased = true;
-            continue;
-        }
 
         const auto data_pretasks = Parser::flatten_pretask(data.pretask);
         auto data_pretask_iter =

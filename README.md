@@ -22,7 +22,7 @@ cmake --build build --config RelWithDebInfo -j 16
 
 ## PI 协议支持版本
 
-MaaPiCli 当前实现至 PI v2.6.0，并支持 v2.7.0 和 v2.8.1 中的 `pretask` 能力。PI 语义版本与 MaaFramework release 版本、`interface.json` 中的 `interface_version: 2` 是三套不同概念。
+MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask` 和 v2.8.1 的 pretask 适用范围过滤。PI 语义版本与 MaaFramework release 版本、`interface.json` 中的 `interface_version: 2` 是三套不同概念。
 
 `maafw-version.txt` 当前锁定的 MaaFramework `v5.12.3` 文档定义到 PI v2.9.0；截至 2026-09-07，上游 MaaFramework main 文档已定义到 PI v2.10.0。下表同时列出这两部分协议能力，便于对照 MaaPiCli 的实际实现状态。
 

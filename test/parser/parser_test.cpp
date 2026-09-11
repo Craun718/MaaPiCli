@@ -53,6 +53,31 @@ int main()
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     const std::filesystem::path fixture_dir = MAAPICLI_TEST_FIXTURE_DIR;
+    {
+        InterfaceData data;
+        data.interface_version = 2;
+        data.resource.emplace_back().name = "default-resource";
+        data.controller.emplace_back().name = "default-controller";
+        data.option["valid-option"].cases.emplace_back().name = "fast";
+        data.pretask = std::vector<InterfaceData::Pretask> {
+            InterfaceData::Pretask { .name = "ordered-first", .exec = "first-pretask", .option = { "valid-option" } }
+        };
+
+        Configuration config;
+        config.resource = "default-resource";
+        config.controller.name = "default-controller";
+        config.pretask.emplace_back();
+        config.pretask.front().name = "ordered-first";
+        config.pretask.front().option = { Configuration::Option { .name = "stale-option" },
+                                          Configuration::Option { .name = "valid-option", .value = "fast" } };
+
+        require(!Parser::check_configuration(data, config), "an invalid pretask option should mark the configuration as changed");
+        require(config.pretask.size() == 1, "an invalid pretask option should not remove the entire pretask");
+        require(
+            config.pretask.front().option.size() == 1 && config.pretask.front().option.front().name == "valid-option",
+            "an invalid pretask option should be removed while valid options are retained");
+    }
+
     auto interface = Parser::parse_interface(fixture_dir / "interface.json");
     require(interface.has_value(), "valid interface with imports should parse");
     if (interface) {
