@@ -2,11 +2,108 @@
 
 #include <functional>
 #include <ranges>
+#include <type_traits>
 #include <unordered_set>
 
 #include "MaaUtils/Logger.h"
 
 MAA_PROJECT_INTERFACE_NS_BEGIN
+
+namespace
+{
+std::vector<InterfaceData::Pretask>
+    flatten_pretask(const std::optional<std::variant<InterfaceData::Pretask, std::vector<InterfaceData::Pretask>>>& pretask)
+{
+    if (!pretask) {
+        return { };
+    }
+
+    return std::visit(
+        [](const auto& value) -> std::vector<InterfaceData::Pretask> {
+            using value_t = std::decay_t<decltype(value)>;
+
+            if constexpr (std::is_same_v<value_t, InterfaceData::Pretask>) {
+                return { value };
+            }
+            else {
+                return value;
+            }
+        },
+        *pretask);
+}
+
+std::optional<InterfaceData> deserialize_interface(const json::value& json)
+{
+    std::string error_key;
+    if (!InterfaceData().check_json(json, error_key)) {
+        LogError << "json is not an InterfaceData" << VAR(error_key) << VAR(json);
+        return std::nullopt;
+    }
+
+    return json.as<InterfaceData>();
+}
+
+bool validate_interface(const InterfaceData& data)
+{
+    // check interface version
+    if (data.interface_version != 2) {
+        LogError << "Unsupported interface version, expected 2" << VAR(data.interface_version);
+        return false;
+    }
+
+    auto check_option_refs = [&](const std::vector<std::string>& options) {
+        for (const auto& option : options) {
+            if (!data.option.contains(option)) {
+                LogError << "Option not found" << VAR(option);
+                return false;
+            }
+        }
+        return true;
+    };
+
+    // check option and group for task
+    for (const auto& task : data.task) {
+        if (!check_option_refs(task.option)) {
+            return false;
+        }
+
+        for (const auto& group : task.group) {
+            auto group_iter = std::ranges::find(data.group, group, std::mem_fn(&InterfaceData::Group::name));
+            if (group_iter == data.group.end()) {
+                LogError << "Group not found" << VAR(group);
+                return false;
+            }
+        }
+    }
+
+    if (!check_option_refs(data.global_option)) {
+        return false;
+    }
+
+    for (const auto& setting : data.setting) {
+        if (!check_option_refs(setting.option)) {
+            return false;
+        }
+    }
+
+    for (const auto& pretask : flatten_pretask(data.pretask)) {
+        if (!check_option_refs(pretask.option)) {
+            return false;
+        }
+    }
+
+    // check controller type
+    for (const auto& ctrl : data.controller) {
+        if (ctrl.type == InterfaceData::Controller::Type::Invalid) {
+            LogError << "Invalid Controller Type" << VAR(ctrl.type);
+            return false;
+        }
+    }
+
+    LogInfo << "Interface Version:" << VAR(data.version);
+    return true;
+}
+} // namespace
 
 std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path& path)
 {
@@ -19,12 +116,23 @@ std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path
     }
 
     const json::value& json = *json_opt;
-    auto data_opt = parse_interface(json);
+    auto data_opt = deserialize_interface(json);
     if (!data_opt) {
         return std::nullopt;
     }
 
     InterfaceData& data = *data_opt;
+    std::vector<InterfaceData::Pretask> merged_pretask = flatten_pretask(data.pretask);
+    bool has_pretask = data.pretask.has_value();
+    std::unordered_set<std::string> group_names;
+    for (const auto& group : data.group) {
+        group_names.insert(group.name);
+    }
+
+    std::unordered_set<std::string> global_option_names;
+    for (const auto& option : data.global_option) {
+        global_option_names.insert(option);
+    }
 
     auto base_dir = path.parent_path();
     for (const std::string& import_path : data_opt->import_) {
@@ -39,12 +147,46 @@ std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path
             std::make_move_iterator(import_data->task.begin()),
             std::make_move_iterator(import_data->task.end()));
 
-        data.option.insert(std::make_move_iterator(import_data->option.begin()), std::make_move_iterator(import_data->option.end()));
+        for (auto& [name, option] : import_data->option) {
+            data.option.insert_or_assign(name, std::move(option));
+        }
+
+        for (auto& option : import_data->global_option) {
+            if (global_option_names.insert(option).second) {
+                data.global_option.push_back(std::move(option));
+            }
+        }
+
+        for (auto& group : import_data->group) {
+            if (group_names.insert(group.name).second) {
+                data.group.push_back(std::move(group));
+            }
+        }
+
+        auto import_pretasks = flatten_pretask(import_data->pretask);
+        has_pretask = has_pretask || import_data->pretask.has_value();
+        merged_pretask.insert(
+            merged_pretask.end(),
+            std::make_move_iterator(import_pretasks.begin()),
+            std::make_move_iterator(import_pretasks.end()));
 
         data.preset.insert(
             data.preset.end(),
             std::make_move_iterator(import_data->preset.begin()),
             std::make_move_iterator(import_data->preset.end()));
+
+        data.setting.insert(
+            data.setting.end(),
+            std::make_move_iterator(import_data->setting.begin()),
+            std::make_move_iterator(import_data->setting.end()));
+    }
+
+    if (has_pretask) {
+        data.pretask = std::move(merged_pretask);
+    }
+
+    if (!validate_interface(data)) {
+        return std::nullopt;
     }
 
     return data;
@@ -52,39 +194,15 @@ std::optional<InterfaceData> Parser::parse_interface(const std::filesystem::path
 
 std::optional<InterfaceData> Parser::parse_interface(const json::value& json)
 {
-    std::string error_key;
-    if (!InterfaceData().check_json(json, error_key)) {
-        LogError << "json is not an InterfaceData" << VAR(error_key) << VAR(json);
+    auto data = deserialize_interface(json);
+    if (!data) {
         return std::nullopt;
     }
 
-    auto data = json.as<InterfaceData>();
-
-    // check interface version
-    if (data.interface_version != 2) {
-        LogError << "Unsupported interface version, expected 2" << VAR(data.interface_version);
+    if (!validate_interface(*data)) {
         return std::nullopt;
     }
 
-    // check option for task
-    for (auto& task : data.task) {
-        for (auto& option : task.option) {
-            if (!data.option.contains(option)) {
-                LogError << "Option not found" << VAR(option);
-                return std::nullopt;
-            }
-        }
-    }
-
-    // check controller type
-    for (auto& ctrl : data.controller) {
-        if (ctrl.type == InterfaceData::Controller::Type::Invalid) {
-            LogError << "Invalid Controller Type" << VAR(ctrl.type);
-            return std::nullopt;
-        }
-    }
-
-    LogInfo << "Interface Version:" << VAR(data.version);
     return data;
 }
 

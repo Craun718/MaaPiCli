@@ -234,6 +234,30 @@ struct InterfaceData
         MEO_JSONIZATION(child_exec, MEO_OPT child_args, MEO_OPT identifier);
     };
 
+    struct Pretask
+    {
+        std::vector<std::string> resource;
+        std::vector<std::string> controller;
+        std::string exec;
+        std::vector<std::string> args;
+        std::string name;
+        std::string label;
+        std::string description;
+        std::string icon;
+        std::vector<std::string> option;
+
+        MEO_JSONIZATION(
+            MEO_OPT resource,
+            MEO_OPT controller,
+            exec,
+            MEO_OPT args,
+            MEO_OPT name,
+            MEO_OPT label,
+            MEO_OPT description,
+            MEO_OPT icon,
+            MEO_OPT option);
+    };
+
     struct Group
     {
         std::string name;
@@ -243,6 +267,18 @@ struct InterfaceData
         bool default_expand = true;
 
         MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, MEO_OPT icon, MEO_OPT default_expand);
+    };
+
+    struct Setting
+    {
+        std::string name;
+        std::string label;
+        std::string description;
+        std::string icon;
+        std::vector<std::string> option;
+        bool default_expand = true;
+
+        MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, MEO_OPT icon, MEO_OPT option, MEO_OPT default_expand);
     };
 
     struct Preset
@@ -282,10 +318,12 @@ struct InterfaceData
     std::vector<Task> task;
     std::unordered_map<std::string, Option> option;
     std::variant<Agent, std::vector<Agent>> agent;
+    std::optional<std::variant<Pretask, std::vector<Pretask>>> pretask;
 
     std::vector<std::string> global_option; // v2.3.0
     std::vector<Group> group;               // v2.4.0
     std::vector<Preset> preset;             // v2.3.0
+    std::vector<Setting> setting;           // v2.8.0
     std::vector<std::string> import_;
 
     MEO_JSONIZATION(
@@ -305,9 +343,11 @@ struct InterfaceData
         MEO_OPT task,
         MEO_OPT option,
         MEO_OPT agent,
+        MEO_OPT pretask,
         MEO_OPT global_option,
         MEO_OPT group,
         MEO_OPT preset,
+        MEO_OPT setting,
         MEO_OPT MEO_KEY("import") import_);
 };
 
@@ -315,9 +355,13 @@ struct ImportData
 {
     std::vector<InterfaceData::Task> task;
     std::unordered_map<std::string, InterfaceData::Option> option;
+    std::vector<std::string> global_option;
+    std::vector<InterfaceData::Group> group;
+    std::optional<std::variant<InterfaceData::Pretask, std::vector<InterfaceData::Pretask>>> pretask;
     std::vector<InterfaceData::Preset> preset;
+    std::vector<InterfaceData::Setting> setting;
 
-    MEO_JSONIZATION(MEO_OPT task, MEO_OPT option, MEO_OPT preset);
+    MEO_JSONIZATION(MEO_OPT task, MEO_OPT option, MEO_OPT global_option, MEO_OPT group, MEO_OPT pretask, MEO_OPT preset, MEO_OPT setting);
 };
 
 struct Configuration

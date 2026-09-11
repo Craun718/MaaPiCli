@@ -1,0 +1,38 @@
+{
+    "task": [
+        {
+            "name": "second-import-task",
+            "entry": "SecondImportTask",
+            "option": [ "shared-option" ],
+            "group": [ "main-group" ]
+        }
+    ],
+    "option": {
+        "shared-option": {
+            "type": "select",
+            "cases": [ { "name": "shared-case", "label": "second-import-label" } ]
+        },
+        "second-global": { "type": "input" },
+        "shared-global": { "type": "input" },
+        "first-only-global": { "type": "input" },
+        "second-only-global": { "type": "input" },
+        "second-setting-option": { "type": "input" },
+        "second-pretask-option": { "type": "input" }
+    },
+    "global_option": [ "second-global", "first-global", "shared-global", "first-only-global", "second-only-global" ],
+    "group": [
+        { "name": "first-group" },
+        { "name": "first-only-group" },
+        { "name": "second-only-group" }
+    ],
+    "pretask": [
+        { "name": "second-first", "exec": "second-first", "option": [ "second-pretask-option" ] },
+        { "name": "second-second", "exec": "second-second" }
+    ],
+    "preset": [
+        { "name": "second-preset", "task": [] }
+    ],
+    "setting": [
+        { "name": "second-setting", "option": [ "second-setting-option" ] }
+    ]
+}

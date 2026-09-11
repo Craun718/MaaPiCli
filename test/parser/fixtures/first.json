@@ -1,0 +1,41 @@
+{
+    "task": [
+        {
+            "name": "first-import-task",
+            "entry": "FirstImportTask",
+            "option": [ "first-import-option" ],
+            "group": [ "first-group" ]
+        }
+    ],
+    "option": {
+        "shared-option": {
+            "type": "select",
+            "cases": [ { "name": "shared-case", "label": "first-import-label" } ]
+        },
+        "first-import-option": {
+            "type": "input"
+        },
+        "first-global": { "type": "input" },
+        "shared-global": { "type": "input" },
+        "first-only-global": { "type": "input" },
+        "main-setting-option": { "type": "input" },
+        "first-setting-option": { "type": "input" },
+        "first-pretask-option": { "type": "input" }
+    },
+    "global_option": [ "first-global", "shared-global", "first-only-global" ],
+    "group": [
+        { "name": "first-group" },
+        { "name": "first-only-group" }
+    ],
+    "pretask": {
+        "name": "first-single-object",
+        "exec": "first-single-object",
+        "option": [ "first-pretask-option" ]
+    },
+    "preset": [
+        { "name": "first-preset", "task": [] }
+    ],
+    "setting": [
+        { "name": "first-setting", "option": [ "first-setting-option" ] }
+    ]
+}
