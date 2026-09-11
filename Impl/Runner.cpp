@@ -3,7 +3,9 @@
 #include <format>
 #include <iostream>
 
-#include <boost/process/v1.hpp>
+#include <boost/process/v1/child.hpp>
+#include <boost/process/v1/environment.hpp>
+#include <boost/process/v1/start_dir.hpp>
 
 #include <meojson/json.hpp>
 
@@ -13,7 +15,6 @@
 
 #include "Common/MaaTypes.h"
 #include "MaaUtils/Encoding.h"
-#include "MaaUtils/IOStream/BoostIO.hpp"
 #include "MaaUtils/Logger.h"
 #include "MaaUtils/Platform.h"
 #include "MaaUtils/ScopeLeave.hpp"
@@ -231,8 +232,8 @@ bool Runner::run(const RuntimeParam& param)
         }
 
         LogInfo << "Start Agent" << VAR(agent_param.child_exec) << VAR(os_args) << VAR(agent_param.cwd);
-        auto& agent_child = agent_children.emplace_back(
-            agent_param.child_exec.native(), os_args, boost::process::v1::start_dir = agent_param.cwd.native());
+        auto& agent_child =
+            agent_children.emplace_back(agent_param.child_exec.native(), os_args, boost::process::v1::start_dir = agent_param.cwd.native());
         if (!agent_child.valid()) {
             LogError << "Failed to start agent process" << VAR(agent_param.child_exec) << VAR(args) << VAR(agent_param.cwd);
             return false;
