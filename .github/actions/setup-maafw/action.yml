@@ -162,11 +162,18 @@ runs:
               DEPS_ARCH: ${{ steps.resolve.outputs.deps-arch }}
           run: |
               ln -s "$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/x-tools" x-tools
-              python3 -c 'import os
+              python3 -c 'import os, subprocess
+              from pathlib import Path
               from maadeps import vcpkg
               triplet = "maa-" + os.environ["DEPS_ARCH"] + "-linux"
               vcpkg.bootstrap(triplet)
-              vcpkg.install("openssl", triplet=triplet)'
+              vcpkg_root = Path(vcpkg.root)
+              subprocess.check_call([
+                  str(vcpkg_root / "vcpkg"),
+                  "install",
+                  "openssl:" + triplet,
+                  "--x-install-root=" + str(vcpkg_root / "installed"),
+              ], cwd=os.environ["GITHUB_WORKSPACE"])'
               rm -rf vcpkg/buildtrees vcpkg/packages vcpkg/downloads
 
         - name: Build Windows MaaUtils import library
