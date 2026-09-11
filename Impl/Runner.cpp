@@ -228,12 +228,12 @@ std::unique_ptr<AgentProcess>
 
     return std::make_unique<AgentProcess>(pid);
 }
-#endif
 
 std::vector<std::string> conv_args(const std::vector<std::string>& args)
 {
     return args;
 }
+#endif
 
 }
 
