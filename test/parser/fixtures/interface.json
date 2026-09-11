@@ -9,7 +9,8 @@
     "resource": [
         {
             "name": "default-resource",
-            "path": [ "resource" ]
+            "path": [ "resource" ],
+            "hash": "Expected-Resource-Hash"
         }
     ],
     "agent": [

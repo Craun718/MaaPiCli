@@ -22,7 +22,7 @@ cmake --build build --config RelWithDebInfo -j 16
 
 ## PI 协议支持版本
 
-MaaPiCli 当前**实现至 PI v2.5.0**。PI 语义版本与 MaaFramework release 版本、`interface.json` 中的 `interface_version: 2` 是三套不同概念。
+MaaPiCli 当前**实现至 PI v2.6.0**。PI 语义版本与 MaaFramework release 版本、`interface.json` 中的 `interface_version: 2` 是三套不同概念。
 
 `maafw-version.txt` 当前锁定的 MaaFramework `v5.12.3` 文档定义到 PI v2.9.0；截至 2026-09-07，上游 MaaFramework main 文档已定义到 PI v2.10.0。下表同时列出这两部分协议能力，便于对照 MaaPiCli 的实际实现状态。
 
@@ -34,7 +34,7 @@ MaaPiCli 当前**实现至 PI v2.5.0**。PI 语义版本与 MaaFramework release
 | v2.3.1 | 明确 option 及其子 option 的 controller/resource 适用性过滤 | ✅ 支持 |
 | v2.4.0 | 顶层 `group` 分组声明与 `task.group`；`import` 导入 group | ✅ 支持 |
 | v2.5.0 | Agent 子进程 `PI_*` 环境变量：Client/UI 版本、语言、项目版本、当前 controller/resource 等 | ✅ 支持 |
-| v2.6.0 | `resource.hash` 资源完整性校验；校验发生在 `resource.path` 加载后、`attach_resource_path` 加载前 | ❌ 未实现，忽略 `hash` |
+| v2.6.0 | `resource.hash` 资源完整性校验；校验发生在 `resource.path` 加载后、`attach_resource_path` 加载前 | ✅ 支持 |
 | v2.7.0 | `pretask` 在 Controller 启动前执行自定义程序；可把 option 当前值序列化为最后一个参数；`import` 导入 pretask | ⚠️ 部分支持：主文件与导入片段中的 `pretask` 均会解析并按执行顺序合并；CLI 不会执行 pretask |
 | v2.8.0 | `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ⚠️ 部分支持：导入的 `global_option` 会合并并生效；`setting` 会解析与合并但不渲染；`hotkey` 未实现 |
 | v2.8.1 | `pretask.controller/resource` 适用范围过滤 | ❌ 未实现；相关字段可解析，但 CLI 不执行 pretask |
@@ -69,7 +69,6 @@ MaaPiCli 当前**实现至 PI v2.5.0**。PI 语义版本与 MaaFramework release
 | `group.description` | 显示分组的详细描述 | 仅显示分组名称/label |
 | task 禁用态显示 | 不满足 resource/controller 约束的 task 灰显 | 直接过滤不显示 |
 | option 禁用态显示 | 不满足约束的 option 灰显 | 直接跳过不提示 |
-| `resource.hash` | 加载主资源后校验并在不匹配时警告 | 不读取 hash，不校验 |
 | `pretask` | Controller 启动前按顺序执行，失败即中止启动 | 解析并合并，但不执行 |
 | `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |

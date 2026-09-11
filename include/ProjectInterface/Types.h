@@ -123,10 +123,11 @@ struct InterfaceData
         std::string label;
         std::string description;
         std::vector<std::string> path;
+        std::string hash;                    // v2.6.0: 期望的 resource.path 完整性校验值
         std::vector<std::string> controller; // 支持的控制器列表
         std::vector<std::string> option;     // v2.3.0: 资源级选项
 
-        MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, path, MEO_OPT controller, MEO_OPT option);
+        MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, path, MEO_OPT hash, MEO_OPT controller, MEO_OPT option);
     };
 
     struct Task
@@ -551,6 +552,8 @@ struct RuntimeParam
 
     std::variant<std::monostate, AdbParam, Win32Param, MacOSParam, PlayCoverParam, GamepadParam, WlRootsParam> controller_param;
     std::vector<std::filesystem::path> resource_path;
+    size_t primary_resource_count = 0; // resource.path 加载数量，加载完成后、附加资源前校验 hash
+    std::string resource_hash;
 
     std::vector<Task> task;
 
