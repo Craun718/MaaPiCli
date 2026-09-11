@@ -122,6 +122,12 @@ int main()
             "later imports should override options with the same name");
         require(interface->option.contains("first-import-option"), "main task should be able to reference an imported option");
 
+        auto password_option = interface->option.find("password-option");
+        require(
+            password_option != interface->option.end() && password_option->second.inputs.size() == 2
+                && password_option->second.inputs.front().password && !password_option->second.inputs.back().password,
+            "input fields should parse the password flag");
+
         require(interface->pretask.has_value(), "merged pretask should be present");
         if (interface->pretask) {
             const auto* pretasks = std::get_if<std::vector<InterfaceData::Pretask>>(&*interface->pretask);

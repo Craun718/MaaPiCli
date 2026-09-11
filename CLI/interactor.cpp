@@ -4,6 +4,7 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <ranges>
 #include <unordered_set>
 
@@ -12,6 +13,9 @@
 #if defined(_WIN32)
 #include "MaaUtils/SafeWindows.hpp"
 #include <shellapi.h>
+#else
+#include <termios.h>
+#include <unistd.h>
 #endif
 
 #include "MaaFramework/Utility/MaaBuffer.h"
@@ -121,6 +125,59 @@ std::vector<int> input_multi(size_t size, std::string_view prompt = "Please inpu
     auto values = input_multi_impl(size, prompt);
     std::cout << "\n";
     return values;
+}
+
+std::optional<std::string> read_hidden_line()
+{
+#ifdef _WIN32
+    const HANDLE console =
+        CreateFileW(L"CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (console == INVALID_HANDLE_VALUE) {
+        return std::nullopt;
+    }
+
+    DWORD original_mode = 0;
+    if (!GetConsoleMode(console, &original_mode)) {
+        CloseHandle(console);
+        return std::nullopt;
+    }
+
+    std::wstring buffer(4096, L'\0');
+    DWORD read = 0;
+    CONSOLE_READCONSOLE_CONTROL control { .nLength = sizeof(control), .nInitialChars = 0, .dwCtrlWakeupMask = 0, .dwControlKeyState = 0 };
+    const BOOL success = SetConsoleMode(console, original_mode & ~ENABLE_ECHO_INPUT)
+                         && ReadConsoleW(console, buffer.data(), static_cast<DWORD>(buffer.size()), &read, &control);
+    SetConsoleMode(console, original_mode);
+    CloseHandle(console);
+    if (!success) {
+        return std::nullopt;
+    }
+
+    buffer.resize(read);
+    while (!buffer.empty() && (buffer.back() == L'\r' || buffer.back() == L'\n')) {
+        buffer.pop_back();
+    }
+    return MAA_NS::from_u16(buffer);
+#else
+    termios original { };
+    if (tcgetattr(STDIN_FILENO, &original) != 0) {
+        return std::nullopt;
+    }
+
+    termios hidden = original;
+    hidden.c_lflag &= ~ECHO;
+    if (tcsetattr(STDIN_FILENO, TCSANOW, &hidden) != 0) {
+        return std::nullopt;
+    }
+
+    std::string line;
+    std::getline(std::cin, line);
+    tcsetattr(STDIN_FILENO, TCSANOW, &original);
+    if (std::cin.eof()) {
+        return std::nullopt;
+    }
+    return line;
+#endif
 }
 
 void clear_screen()
@@ -413,7 +470,8 @@ void Interactor::print_config() const
             else if (!opt.inputs.empty()) {
                 std::cout << "\t" << MAA_NS::utf8_to_crt(opt.name) << ":\n";
                 for (const auto& [key, val] : opt.inputs) {
-                    std::cout << "\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(val) << "\n";
+                    std::cout << "\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(display_input_value(opt.name, key, val))
+                              << "\n";
                 }
             }
         }
@@ -1495,11 +1553,20 @@ bool Interactor::process_option(
                 std::string input_desc = read_text_content(input_def.description);
                 std::cout << MAA_NS::utf8_to_crt(input_desc) << "\n";
             }
-            std::cout << MAA_NS::utf8_to_crt(std::format("{} [{}]: ", input_display_name, default_val));
+            std::cout << MAA_NS::utf8_to_crt(std::format("{} [{}]: ", input_display_name, input_def.password ? "********" : default_val));
 
             std::cin.sync();
             std::string buffer;
-            std::getline(std::cin, buffer);
+            if (input_def.password) {
+                auto hidden_input = read_hidden_line();
+                if (!hidden_input) {
+                    return false;
+                }
+                buffer = std::move(*hidden_input);
+            }
+            else {
+                std::getline(std::cin, buffer);
+            }
 
             std::string value = buffer.empty() ? default_val : buffer;
 
@@ -1510,7 +1577,16 @@ bool Interactor::process_option(
                         std::string error_msg =
                             input_def.pattern_msg.empty() ? "Invalid input, please retry: " : input_def.pattern_msg + ": ";
                         std::cout << MAA_NS::utf8_to_crt(error_msg);
-                        std::getline(std::cin, buffer);
+                        if (input_def.password) {
+                            auto hidden_input = read_hidden_line();
+                            if (!hidden_input) {
+                                return false;
+                            }
+                            buffer = std::move(*hidden_input);
+                        }
+                        else {
+                            std::getline(std::cin, buffer);
+                        }
                         value = buffer.empty() ? default_val : buffer;
                         value_u16 = MAA_NS::to_u16(value);
                     }
@@ -1613,7 +1689,8 @@ void Interactor::print_config_tasks(bool with_index) const
             else if (!opt.inputs.empty()) {
                 std::cout << "\t\t- " << MAA_NS::utf8_to_crt(opt.name) << ":\n";
                 for (const auto& [key, val] : opt.inputs) {
-                    std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(val) << "\n";
+                    std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(key) << ": "
+                              << MAA_NS::utf8_to_crt(display_input_value(opt.name, key, val)) << "\n";
                 }
             }
         }
@@ -1995,6 +2072,21 @@ std::string Interactor::get_display_name(const std::string& name, const std::str
     }
     // 翻译 label（如果以 $ 开头会被翻译）
     return config_.translate(label);
+}
+
+std::string Interactor::display_input_value(const std::string& option_name, const std::string& input_name, const std::string& value) const
+{
+    using namespace MAA_PROJECT_INTERFACE_NS;
+
+    const auto& options = config_.interface_data().option;
+    auto option_iter = options.find(option_name);
+    if (option_iter == options.end()) {
+        return value;
+    }
+
+    const auto is_password =
+        std::ranges::any_of(option_iter->second.inputs, [&](const auto& input) { return input.name == input_name && input.password; });
+    return is_password ? "********" : value;
 }
 
 std::string Interactor::read_text_content(const std::string& text) const

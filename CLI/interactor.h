@@ -70,6 +70,8 @@ private:
     // 获取翻译后的显示名称：优先使用翻译后的 label，否则使用 name
     std::string get_display_name(const std::string& name, const std::string& label) const;
 
+    std::string display_input_value(const std::string& option_name, const std::string& input_name, const std::string& value) const;
+
     // 读取文本内容：如果是文件路径则读取文件，否则直接返回；支持翻译
     std::string read_text_content(const std::string& text) const;
 

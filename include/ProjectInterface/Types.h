@@ -193,6 +193,7 @@ struct InterfaceData
             PipelineType pipeline_type = PipelineType::String;
             std::string verify;      // regex
             std::string pattern_msg; // 验证失败提示
+            bool password = false;
 
             MEO_JSONIZATION(
                 name,
@@ -201,7 +202,8 @@ struct InterfaceData
                 MEO_OPT MEO_KEY("default") default_,
                 MEO_OPT pipeline_type,
                 MEO_OPT verify,
-                MEO_OPT pattern_msg);
+                MEO_OPT pattern_msg,
+                MEO_OPT password);
         };
 
         Type type = Type::Select;

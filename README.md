@@ -41,7 +41,7 @@ MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask` 和 v
 | v2.9.0 | `telemetry.sentry` 匿名遥测配置：DSN、tracing、事务采样率、环境标签 | ❌ 未实现，不读取和上报遥测 |
 | v2.9.1 | `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 未实现；CLI 当前也未处理 focus 回调 |
 | v2.9.2 | `telemetry.sentry.failure_attachments_sample_rate` 失败诊断附件采样率 | ❌ 未实现 |
-| v2.10.0 | `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ❌ 未实现，仍按普通输入处理并明文保存配置 |
+| v2.10.0 | `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ✅ 支持：CLI 隐藏输入并掩码展示；Windows 使用 DPAPI、macOS 使用 Keychain、Linux 使用 AES-GCM 加密配置；pretask 与 pipeline 使用内存明文 |
 
 由于 `interface_version` 仍为 `2`，包含 v2.6.0 及以后新增字段的配置通常仍可被解析并加载其既有功能；但这些新增字段不会被 MaaPiCli 启用。使用 `hotkey` option 的项目可能无法得到预期交互，应优先为 CLI 提供其他 option 类型。
 
