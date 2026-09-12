@@ -289,19 +289,23 @@ bool Interactor::load(const std::filesystem::path& resource_path)
     return true;
 }
 
-void Interactor::interact()
+bool Interactor::interact()
 {
     if (config_.is_first_time_use()) {
         interact_for_first_time_use();
-        config_.save(user_path_);
+        if (!save_config()) {
+            return false;
+        }
     }
 
     while (true) {
         print_config();
         if (!interact_once()) {
-            break;
+            return true;
         }
-        config_.save(user_path_);
+        if (!save_config()) {
+            return false;
+        }
     }
 }
 
@@ -326,7 +330,9 @@ Interactor::ElevationResult Interactor::check_and_elevate_if_needed()
     std::cout << "\nThis controller requires administrator privileges.\n"
                  "MaaPiCli will try to restart itself as Administrator to run tasks (UAC prompt will appear).\n\n";
 
-    config_.save(user_path_);
+    if (!save_config()) {
+        return ElevationResult::Failed;
+    }
 
     if (!restart_self_as_admin()) {
         std::cout << "\nFailed to restart as Administrator (UAC may have been cancelled, or the request was denied).\n"
@@ -360,7 +366,9 @@ bool Interactor::run()
     if (!ensure_pretask_options()) {
         return false;
     }
-    config_.save(user_path_);
+    if (!save_config()) {
+        return false;
+    }
 
     auto runtime = config_.generate_runtime();
     if (!runtime) {
@@ -1953,6 +1961,17 @@ bool Interactor::ensure_pretask_option_tree(
     }
 
     return true;
+}
+
+bool Interactor::save_config()
+{
+    if (config_.save(user_path_)) {
+        return true;
+    }
+
+    LogError << "Failed to save configuration" << VAR(user_path_);
+    std::cout << "\nFailed to save configuration.\n\n";
+    return false;
 }
 
 void Interactor::mpause() const

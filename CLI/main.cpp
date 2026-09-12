@@ -74,6 +74,5 @@ int main(int argc, char** argv)
         return result ? 0 : -1;
     }
 
-    interactor.interact();
-    return 0;
+    return interactor.interact() ? 0 : -1;
 }

@@ -9,7 +9,7 @@ public:
 
     bool load(const std::filesystem::path& resource_path);
     void print_config() const;
-    void interact();
+    bool interact();
     bool run();
 
 private:
@@ -61,6 +61,8 @@ private:
     void print_config_tasks(bool with_index = true) const;
 
     bool check_validity();
+
+    bool save_config();
 
     void mpause() const;
 

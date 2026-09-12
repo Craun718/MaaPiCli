@@ -38,6 +38,14 @@ constexpr std::string_view kWindowsPrefix = "dpapi:";
 constexpr std::string_view kKeychainPrefix = "keychain:";
 constexpr std::string_view kAesGcmPrefix = "gcm:";
 
+#if defined(_WIN32)
+constexpr std::string_view kCurrentPlatformPrefix = kWindowsPrefix;
+#elif defined(__APPLE__)
+constexpr std::string_view kCurrentPlatformPrefix = kKeychainPrefix;
+#else
+constexpr std::string_view kCurrentPlatformPrefix = kAesGcmPrefix;
+#endif
+
 bool starts_with(const std::string& value, std::string_view prefix)
 {
     return value.starts_with(prefix);
@@ -511,19 +519,16 @@ std::string SecretStore::decrypt(const std::string& context, const std::string& 
         return value;
     }
 
-#if defined(_WIN32)
-    if (!starts_with(value, kWindowsPrefix)) {
-        return value;
+    for (const auto prefix : { kWindowsPrefix, kKeychainPrefix, kAesGcmPrefix }) {
+        if (!starts_with(value, prefix)) {
+            continue;
+        }
+        if (prefix != kCurrentPlatformPrefix) {
+            LogError << "Password was encrypted on another platform";
+            return { };
+        }
+        break;
     }
-#elif defined(__APPLE__)
-    if (!starts_with(value, kKeychainPrefix)) {
-        return value;
-    }
-#else
-    if (!starts_with(value, kAesGcmPrefix)) {
-        return value;
-    }
-#endif
 
     auto decrypted = decrypt_value(context, value);
     if (decrypted.empty()) {
