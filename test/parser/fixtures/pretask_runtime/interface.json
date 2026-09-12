@@ -27,7 +27,7 @@
         "credentials": {
             "type": "input",
             "inputs": [
-                { "name": "token", "default": "default-token" }
+                { "name": "token", "default": "default-token", "password": true }
             ]
         },
         "hidden-option": {

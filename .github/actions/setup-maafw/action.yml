@@ -11,6 +11,10 @@ inputs:
     arch:
         description: Target architecture
         required: true
+    maadeps-version:
+        description: MaaDeps release tag used to build Linux OpenSSL
+        required: false
+        default: v2.12.2
 
 outputs:
     install-prefix:
@@ -19,6 +23,9 @@ outputs:
     dependency-prefix:
         description: Installed MaaDeps prefix required by exported CMake targets
         value: ${{ steps.prefixes.outputs.dependency-prefix }}
+    openssl-prefix:
+        description: Installed target-architecture OpenSSL prefix on Linux
+        value: ${{ steps.prefixes.outputs.openssl-prefix }}
     toolchain-file:
         description: MaaDeps CMake toolchain file, when cross-compiling
         value: ${{ steps.prefixes.outputs.toolchain-file }}
@@ -129,6 +136,56 @@ runs:
               DEPS_OS: ${{ steps.resolve.outputs.deps-os }}
           run: python tools/maadeps-download.py "$DEPS_ARCH-$DEPS_OS"
 
+        - name: Checkout MaaDeps toolchain
+          if: runner.os == 'Linux'
+          uses: actions/checkout@v7
+          with:
+              repository: MaaXYZ/MaaDeps
+              ref: ${{ inputs.maadeps-version }}
+              path: MaaDeps
+              submodules: recursive
+
+        - name: Cache Linux OpenSSL
+          id: cache-openssl
+          if: runner.os == 'Linux'
+          uses: actions/cache@v6
+          with:
+              path: MaaDeps/vcpkg/installed
+              key: linux-openssl-${{ inputs.arch }}-${{ inputs.maadeps-version }}
+
+        - name: Install Linux OpenSSL
+          if: runner.os == 'Linux' && steps.cache-openssl.outputs.cache-hit != 'true'
+          shell: bash
+          working-directory: ${{ github.workspace }}/MaaDeps
+          env:
+              DEPS_ARCH: ${{ steps.resolve.outputs.deps-arch }}
+          run: |
+              ln -s "$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/x-tools" x-tools
+
+              triplet="maa-$DEPS_ARCH-linux"
+              vcpkg_root="$PWD/vcpkg"
+              export VCPKG_OVERLAY_TRIPLETS="$PWD/vcpkg-overlay/triplets"
+              export VCPKG_OVERLAY_PORTS="$PWD/vcpkg-overlay/ports"
+
+              if [[ ! -f "$vcpkg_root/vcpkg" ]]; then
+                  if [[ ! -f "$vcpkg_root/bootstrap_vcpkg.bat" ]]; then
+                      git submodule update --init --recommend-shallow vcpkg
+                  fi
+                  "$vcpkg_root/bootstrap-vcpkg.sh" -disableMetrics
+              fi
+
+              # Install in classic mode; MaaDeps root contains a manifest.
+              (
+                  cd "$GITHUB_WORKSPACE"
+                  "$vcpkg_root/vcpkg" install \
+                    "openssl:$triplet" \
+                    --x-install-root="$vcpkg_root/installed" \
+                    --overlay-triplets="$VCPKG_OVERLAY_TRIPLETS" \
+                    --overlay-ports="$VCPKG_OVERLAY_PORTS"
+              )
+
+              rm -rf vcpkg/buildtrees vcpkg/packages vcpkg/downloads
+
         - name: Build Windows MaaUtils import library
           if: runner.os == 'Windows'
           shell: bash
@@ -202,9 +259,13 @@ runs:
           run: |
               install_prefix="$GITHUB_WORKSPACE/maafw-prefix"
               dependency_prefix="$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/vcpkg/installed/maa-$DEPS_ARCH-$DEPS_OS"
+              openssl_prefix=""
               toolchain_file=""
               if [[ "$RUNNER_OS" == "Linux" ]]; then
                   toolchain_file="$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps/cmake/maa-$DEPS_ARCH-linux-toolchain.cmake"
+                  openssl_prefix="$GITHUB_WORKSPACE/MaaDeps/vcpkg/installed/maa-$DEPS_ARCH-linux"
+                  test -f "$openssl_prefix/include/openssl/evp.h"
+                  test -f "$openssl_prefix/lib/libcrypto.a"
               fi
 
               test -d "$dependency_prefix"
@@ -220,5 +281,6 @@ runs:
               {
                   echo "install-prefix=$install_prefix"
                   echo "dependency-prefix=$dependency_prefix"
+                  echo "openssl-prefix=$openssl_prefix"
                   echo "toolchain-file=$toolchain_file"
               } >> "$GITHUB_OUTPUT"

@@ -19,7 +19,7 @@ class Configurator
 public:
     bool load(const std::filesystem::path& project_dir, const std::filesystem::path& user_dir);
     bool check_configuration();
-    void save(const std::filesystem::path& user_dir);
+    bool save(const std::filesystem::path& user_dir);
 
     std::optional<RuntimeParam> generate_runtime() const;
 

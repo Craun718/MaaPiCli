@@ -62,6 +62,11 @@ int main()
     credentials.name = "credentials";
     credentials.inputs["token"] = "secret-token";
 
+    const auto& credentials_inputs = configurator.interface_data().option.at("credentials").inputs;
+    require(
+        std::ranges::any_of(credentials_inputs, [](const auto& input) { return input.name == "token" && input.password; }),
+        "pretask fixture should parse the password flag");
+
     Configuration::Pretask pretask_config;
     pretask_config.name = "ordered-first";
     pretask_config.option = { std::move(policy), std::move(flags), std::move(credentials) };

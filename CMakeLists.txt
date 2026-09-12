@@ -16,7 +16,9 @@ set(maa_pi_cli_core_src
     CLI/interactor.h
     Impl/Configurator.cpp
     Impl/Parser.cpp
-    Impl/Runner.cpp)
+    Impl/Runner.cpp
+    Impl/SecretStore.cpp
+    Impl/SecretStore.h)
 
 add_library(MaaPiCliCore STATIC ${maa_pi_cli_core_src} ${maa_pi_cli_header})
 add_library(MaaPiCli::Core ALIAS MaaPiCliCore)
@@ -42,6 +44,17 @@ target_link_libraries(
 if(LINUX)
     find_package(Threads REQUIRED)
     target_link_libraries(MaaPiCliCore PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+endif()
+
+if(WIN32)
+    target_link_libraries(MaaPiCliCore PUBLIC Crypt32)
+elseif(APPLE)
+    find_library(MaaPiCli_CoreFoundation_LIBRARY CoreFoundation REQUIRED)
+    find_library(MaaPiCli_Security_LIBRARY Security REQUIRED)
+    target_link_libraries(MaaPiCliCore PUBLIC "${MaaPiCli_CoreFoundation_LIBRARY}" "${MaaPiCli_Security_LIBRARY}")
+else()
+    find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+    target_link_libraries(MaaPiCliCore PUBLIC OpenSSL::Crypto)
 endif()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${maa_pi_cli_core_src})

@@ -10,7 +10,7 @@ MaaFramework 官方提供的命令行 ProjectInterface Client，用于通过终�
 
 仓库根目录的 `maafw-version.txt` 锁定本版本 MaaPiCli 使用的 MaaFramework release tag。fork、历史 tag 或 release 包中都带有这个文件，可以直接确认应使用的 runtime 版本。
 
-编译前先读取该文件，并从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载同名版本的 `MAA-<os>-<arch>-<version>.zip`。解压后把该目录传入 `CMAKE_PREFIX_PATH`，同时按平台安装 Boost 与 OpenCV 的开发配置：
+编译前先读取该文件，并从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载同名版本的 `MAA-<os>-<arch>-<version>.zip`。解压后把该目录传入 `CMAKE_PREFIX_PATH`，同时按平台安装 Boost 与 OpenCV 的开发配置。Linux 还需要安装 `libssl-dev` 或发行版等价的 OpenSSL 开发包。
 
 ```bash
 maafw_version="$(cat maafw-version.txt)"
@@ -41,7 +41,7 @@ MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask` 和 v
 | v2.9.0 | `telemetry.sentry` 匿名遥测配置：DSN、tracing、事务采样率、环境标签 | ❌ 未实现，不读取和上报遥测 |
 | v2.9.1 | `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 未实现；CLI 当前也未处理 focus 回调 |
 | v2.9.2 | `telemetry.sentry.failure_attachments_sample_rate` 失败诊断附件采样率 | ❌ 未实现 |
-| v2.10.0 | `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ❌ 未实现，仍按普通输入处理并明文保存配置 |
+| v2.10.0 | `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ✅ 支持：CLI 隐藏输入并掩码展示；Windows 使用 DPAPI、macOS 使用 Keychain、Linux 使用 AES-GCM 加密配置；pretask 与 pipeline 使用内存明文 |
 
 由于 `interface_version` 仍为 `2`，包含 v2.6.0 及以后新增字段的配置通常仍可被解析并加载其既有功能；但这些新增字段不会被 MaaPiCli 启用。使用 `hotkey` option 的项目可能无法得到预期交互，应优先为 CLI 提供其他 option 类型。
 
@@ -71,7 +71,6 @@ MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask` 和 v
 | option 禁用态显示 | 不满足约束的 option 灰显 | 直接跳过不提示 |
 | `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |
-| 密码输入 | 掩码显示、加密保存并全局脱敏 | 明文输入、明文保存 |
 
 ## 用法
 

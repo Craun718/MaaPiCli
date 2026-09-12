@@ -10,6 +10,7 @@
 #include "MaaUtils/ScopeLeave.hpp"
 #include "MaaUtils/StringMisc.hpp"
 #include "ProjectInterface/Parser.h"
+#include "SecretStore.h"
 
 MAA_PROJECT_INTERFACE_NS_BEGIN
 
@@ -96,6 +97,60 @@ std::string pretask_identifier(const InterfaceData::Pretask& pretask)
 {
     return pretask.name.empty() ? pretask.exec : pretask.name;
 }
+
+template <typename Transform>
+bool transform_stored_passwords(
+    const std::unordered_map<std::string, InterfaceData::Option>& options,
+    Configuration& config,
+    Transform transform)
+{
+    auto transform_option_list = [&](const std::string& scope, std::vector<Configuration::Option>& config_options) {
+        for (auto& config_option : config_options) {
+            auto option_iter = options.find(config_option.name);
+            if (option_iter == options.end() || option_iter->second.type != InterfaceData::Option::Type::Input) {
+                continue;
+            }
+
+            for (const auto& input_def : option_iter->second.inputs) {
+                if (!input_def.password) {
+                    continue;
+                }
+
+                auto value_iter = config_option.inputs.find(input_def.name);
+                if (value_iter == config_option.inputs.end()) {
+                    continue;
+                }
+
+                auto value = transform(scope + "/" + config_option.name + "/" + input_def.name, value_iter->second);
+                if (value.empty() && !value_iter->second.empty()) {
+                    return false;
+                }
+                value_iter->second = std::move(value);
+            }
+        }
+        return true;
+    };
+
+    if (!transform_option_list("global", config.global_option) || !transform_option_list("resource", config.resource_option)
+        || !transform_option_list("controller", config.controller_option)) {
+        return false;
+    }
+
+    for (auto& task : config.task) {
+        if (!transform_option_list("task/" + task.name, task.option)) {
+            return false;
+        }
+    }
+
+    for (auto& pretask : config.pretask) {
+        if (!transform_option_list("pretask/" + pretask.name, pretask.option)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 } // namespace
 
 bool Configurator::load(const std::filesystem::path& resource_dir, const std::filesystem::path& user_dir)
@@ -116,6 +171,10 @@ bool Configurator::load(const std::filesystem::path& resource_dir, const std::fi
     if (auto cfg_opt = Parser::parse_config(user_dir / kConfigPath)) {
         config_ = *std::move(cfg_opt);
         first_time_use_ = false;
+        if (!transform_stored_passwords(data_.option, config_, SecretStore::decrypt)) {
+            LogError << "Failed to decrypt stored password inputs";
+            return false;
+        }
     }
     else {
         first_time_use_ = true;
@@ -140,9 +199,15 @@ bool Configurator::check_configuration()
     return Parser::check_configuration(data_, config_);
 }
 
-void Configurator::save(const std::filesystem::path& user_dir)
+bool Configurator::save(const std::filesystem::path& user_dir)
 {
     LogInfo << VAR(user_dir);
+
+    auto stored_config = config_;
+    if (!transform_stored_passwords(data_.option, stored_config, SecretStore::encrypt)) {
+        LogError << "Refusing to save configuration with an encryption failure";
+        return false;
+    }
 
     const auto config_path = user_dir / kConfigPath;
     if (config_path.has_parent_path()) {
@@ -152,10 +217,11 @@ void Configurator::save(const std::filesystem::path& user_dir)
     std::ofstream ofs(config_path);
     if (!ofs.is_open()) {
         LogError << "failed to open" << VAR(config_path);
-        return;
+        return false;
     }
 
-    ofs << config_.to_json();
+    ofs << stored_config.to_json();
+    return true;
 }
 
 std::optional<RuntimeParam> Configurator::generate_runtime() const
@@ -501,7 +567,7 @@ void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
                 runtime_task.pipeline_override.emplace(parsed->as_object());
             }
             else {
-                LogWarn << "Failed to parse pipeline override JSON for input option" << VAR(config_option.name) << VAR(override_str);
+                LogWarn << "Failed to parse pipeline override JSON for input option" << VAR(config_option.name);
             }
         } break;
         }
