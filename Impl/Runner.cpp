@@ -6,6 +6,10 @@
 #include <optional>
 #include <utility>
 
+#ifdef _WIN32
+#include <system_error>
+#endif
+
 #ifndef _WIN32
 #include <cerrno>
 #include <fcntl.h>
@@ -75,6 +79,30 @@ std::vector<std::wstring> conv_args(const std::vector<std::string>& args)
     return wargs;
 }
 
+std::string createprocess_error_hint(DWORD error_code)
+{
+    switch (error_code) {
+    case ERROR_FILE_NOT_FOUND:
+        return "Executable not found. Check PATH or use an absolute path for child_exec (e.g. the full path to python.exe).";
+    case ERROR_PATH_NOT_FOUND:
+        return "Path not found. Check child_exec, child_args, and cwd paths.";
+    case ERROR_DIRECTORY:
+        return "The working directory (cwd) is invalid or does not exist.";
+    case ERROR_ACCESS_DENIED:
+        return "Access denied. MaaPiCli may need to run as administrator.";
+    case ERROR_BAD_EXE_FORMAT:
+        return "Bad executable format. Ensure child_exec points to a valid .exe/dll-compatible executable for this platform.";
+    case ERROR_ELEVATION_REQUIRED:
+        return "Elevation required. Run MaaPiCli as administrator, or use a child_exec that does not need elevation.";
+    case ERROR_DLL_NOT_FOUND:
+        return "A required DLL was not found. The child executable may need its dependencies on PATH.";
+    case ERROR_MOD_NOT_FOUND:
+        return "A required module was not found. Check the environment/dependencies of the child process.";
+    default:
+        return "Failed to launch child process. Verify child_exec is on PATH, all script paths exist, and cwd is valid.";
+    }
+}
+
 bool run_pretask_process(const RuntimeParam::Pretask& pretask)
 {
     std::wstring command_line = quote_argument(pretask.exec.native());
@@ -96,6 +124,11 @@ bool run_pretask_process(const RuntimeParam::Pretask& pretask)
             pretask.cwd.native().c_str(),
             &startup_info,
             &process_info)) {
+        DWORD error_code = ::GetLastError();
+        std::string error_message = std::system_category().message(static_cast<int>(error_code));
+        std::string error_hint = createprocess_error_hint(error_code);
+        LogError << "Failed to CreateProcessW" << VAR(pretask.exec) << VAR(pretask.cwd) << VAR(error_code)
+                 << VAR(error_message) << VAR(error_hint);
         return false;
     }
 
@@ -172,6 +205,11 @@ std::unique_ptr<AgentProcess>
             cwd.native().c_str(),
             &startup_info,
             &process_info)) {
+        DWORD error_code = ::GetLastError();
+        std::string error_message = std::system_category().message(static_cast<int>(error_code));
+        std::string error_hint = createprocess_error_hint(error_code);
+        LogError << "Failed to CreateProcessW" << VAR(executable) << VAR(cwd) << VAR(error_code)
+                 << VAR(error_message) << VAR(error_hint);
         return nullptr;
     }
 
