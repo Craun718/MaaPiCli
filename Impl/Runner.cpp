@@ -85,13 +85,13 @@ std::string createprocess_error_hint(DWORD error_code)
     case ERROR_FILE_NOT_FOUND:
         return "Executable not found. Check PATH or use an absolute path for child_exec (e.g. the full path to python.exe).";
     case ERROR_PATH_NOT_FOUND:
-        return "Path not found. Check child_exec, child_args, and cwd paths.";
+        return "Path not found. Check child_exec and cwd paths. Paths in child_args are validated after the child starts.";
     case ERROR_DIRECTORY:
         return "The working directory (cwd) is invalid or does not exist.";
     case ERROR_ACCESS_DENIED:
         return "Access denied. MaaPiCli may need to run as administrator.";
     case ERROR_BAD_EXE_FORMAT:
-        return "Bad executable format. Ensure child_exec points to a valid .exe/dll-compatible executable for this platform.";
+        return "Bad executable format. Ensure child_exec points to a runnable Windows executable (e.g. .exe); required DLL dependencies must also be available.";
     case ERROR_ELEVATION_REQUIRED:
         return "Elevation required. Run MaaPiCli as administrator, or use a child_exec that does not need elevation.";
     case ERROR_DLL_NOT_FOUND:
@@ -99,7 +99,7 @@ std::string createprocess_error_hint(DWORD error_code)
     case ERROR_MOD_NOT_FOUND:
         return "A required module was not found. Check the environment/dependencies of the child process.";
     default:
-        return "Failed to launch child process. Verify child_exec is on PATH, all script paths exist, and cwd is valid.";
+        return "Failed to launch child process. Verify child_exec is on PATH and cwd is valid. Paths in child_args are validated after the child starts.";
     }
 }
 
