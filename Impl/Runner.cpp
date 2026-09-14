@@ -91,7 +91,8 @@ std::string createprocess_error_hint(DWORD error_code)
     case ERROR_ACCESS_DENIED:
         return "Access denied. MaaPiCli may need to run as administrator.";
     case ERROR_BAD_EXE_FORMAT:
-        return "Bad executable format. Ensure child_exec points to a runnable Windows executable (e.g. .exe); required DLL dependencies must also be available.";
+        return "Bad executable format. Ensure child_exec points to a runnable Windows executable (e.g. .exe); required DLL dependencies "
+               "must also be available.";
     case ERROR_ELEVATION_REQUIRED:
         return "Elevation required. Run MaaPiCli as administrator, or use a child_exec that does not need elevation.";
     case ERROR_DLL_NOT_FOUND:
@@ -99,7 +100,8 @@ std::string createprocess_error_hint(DWORD error_code)
     case ERROR_MOD_NOT_FOUND:
         return "A required module was not found. Check the environment/dependencies of the child process.";
     default:
-        return "Failed to launch child process. Verify child_exec is on PATH and cwd is valid. Paths in child_args are validated after the child starts.";
+        return "Failed to launch child process. Verify child_exec is on PATH and cwd is valid. Paths in child_args are validated after the "
+               "child starts.";
     }
 }
 
@@ -127,8 +129,8 @@ bool run_pretask_process(const RuntimeParam::Pretask& pretask)
         DWORD error_code = ::GetLastError();
         std::string error_message = std::system_category().message(static_cast<int>(error_code));
         std::string error_hint = createprocess_error_hint(error_code);
-        LogError << "Failed to CreateProcessW" << VAR(pretask.exec) << VAR(pretask.cwd) << VAR(error_code)
-                 << VAR(error_message) << VAR(error_hint);
+        LogError << "Failed to CreateProcessW" << VAR(pretask.exec) << VAR(pretask.cwd) << VAR(error_code) << VAR(error_message)
+                 << VAR(error_hint);
         return false;
     }
 
@@ -208,8 +210,7 @@ std::unique_ptr<AgentProcess>
         DWORD error_code = ::GetLastError();
         std::string error_message = std::system_category().message(static_cast<int>(error_code));
         std::string error_hint = createprocess_error_hint(error_code);
-        LogError << "Failed to CreateProcessW" << VAR(executable) << VAR(cwd) << VAR(error_code)
-                 << VAR(error_message) << VAR(error_hint);
+        LogError << "Failed to CreateProcessW" << VAR(executable) << VAR(cwd) << VAR(error_code) << VAR(error_message) << VAR(error_hint);
         return nullptr;
     }
 
