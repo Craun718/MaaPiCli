@@ -53,10 +53,13 @@ private:
 
     // Process option and its nested sub-options recursively
     // Returns false if option processing failed (e.g., option not found, invalid configuration)
+    // auto_accept_default: 自动补全流程（default_check 默认任务、pretask 选项树）直接采用 default_case，
+    // 不打断批量添加与 -d 直跑；用户主动配置时该值为 false，default_case 仅作为预选值仍会提示
     bool process_option(
         const std::string& option_name,
         const std::string& task_display_name,
-        std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options);
+        std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
+        bool auto_accept_default = false);
 
     void print_config_tasks(bool with_index = true) const;
 

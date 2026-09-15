@@ -6,6 +6,7 @@
 #include <functional>
 #include <optional>
 #include <ranges>
+#include <span>
 #include <unordered_set>
 
 #include <boost/regex.hpp>
@@ -47,14 +48,19 @@ static constexpr bool kWlRootsSupported = true;
 static constexpr bool kWlRootsSupported = false;
 #endif
 
-// return [1, size]
-std::vector<int> input_multi_impl(size_t size, std::string_view prompt)
+// return [1, size]; an empty input returns defaults when defaults is non-empty and in range
+std::vector<int> input_multi_impl(size_t size, std::string_view prompt, std::span<const int> defaults = { })
 {
     std::vector<int> values;
 
     auto fail = [&]() {
         std::cout << std::format("Invalid value, {} [1-{}]: ", prompt, size);
         values.clear();
+    };
+
+    auto has_valid_default = [&]() {
+        return !defaults.empty()
+               && std::ranges::all_of(defaults, [&](int value) { return value >= 1 && static_cast<size_t>(value) <= size; });
     };
 
     while (true) {
@@ -68,6 +74,9 @@ std::vector<int> input_multi_impl(size_t size, std::string_view prompt)
         }
 
         if (buffer.empty()) {
+            if (has_valid_default()) {
+                return std::vector<int>(defaults.begin(), defaults.end());
+            }
             fail();
             continue;
         }
@@ -79,12 +88,28 @@ std::vector<int> input_multi_impl(size_t size, std::string_view prompt)
 
         std::istringstream iss(buffer);
         size_t val = 0;
-        while (iss >> val) {
+        bool out_of_range = false;
+        bool parse_failed = false;
+        while (!iss.eof()) {
+            iss >> std::ws;
+            if (iss.eof()) {
+                break;
+            }
+            // An integer exceeding size_t also sets failbit on extraction.
+            if (!(iss >> val)) {
+                parse_failed = true;
+                break;
+            }
             if (val == 0 || val > size) {
-                fail();
+                out_of_range = true;
                 break;
             }
             values.emplace_back(static_cast<int>(val));
+        }
+        if (out_of_range || parse_failed || values.empty()) {
+            // 旧实现此处直接 break 出外层循环，会把「越界」当成「没选任何项」静默返回
+            fail();
+            continue;
         }
         break;
     }
@@ -92,8 +117,8 @@ std::vector<int> input_multi_impl(size_t size, std::string_view prompt)
     return values;
 }
 
-// return [1, size]
-int input(size_t size, std::string_view prompt = "Please input")
+// return [1, size]; an empty input returns default_value when it is in [1, size]
+int input(size_t size, std::string_view prompt = "Please input", int default_value = 0)
 {
     std::cout << std::format("{} [1-{}]: ", prompt, size);
 
@@ -101,9 +126,12 @@ int input(size_t size, std::string_view prompt = "Please input")
         std::cout << std::format("Invalid value, {} [1-{}]: ", prompt, size);
     };
 
+    const int default_values[] = { default_value };
+    const std::span<const int> defaults = default_value >= 1 ? std::span<const int>(default_values) : std::span<const int> { };
+
     int val = 0;
     while (true) {
-        auto values = input_multi_impl(size, prompt);
+        auto values = input_multi_impl(size, prompt, defaults);
         if (s_eof) {
             return { };
         }
@@ -119,10 +147,10 @@ int input(size_t size, std::string_view prompt = "Please input")
     return val;
 }
 
-std::vector<int> input_multi(size_t size, std::string_view prompt = "Please input multiple")
+std::vector<int> input_multi(size_t size, std::string_view prompt = "Please input multiple", std::span<const int> defaults = { })
 {
     std::cout << std::format("{} [1-{}]: ", prompt, size);
-    auto values = input_multi_impl(size, prompt);
+    auto values = input_multi_impl(size, prompt, defaults);
     std::cout << "\n";
     return values;
 }
@@ -1368,7 +1396,8 @@ void Interactor::add_default_tasks()
         std::vector<Configuration::Option> config_options;
         bool all_options_ok = true;
         for (const auto& option_name : task.option) {
-            if (!process_option(option_name, task_display_name, config_options)) {
+            // 自动添加 default_check 任务：带 default_case 的 option 直接采用默认值，不打断批量添加
+            if (!process_option(option_name, task_display_name, config_options, /*auto_accept_default=*/true)) {
                 LogWarn << "Failed to process option for default task, skipping" << VAR(task.name) << VAR(option_name);
                 all_options_ok = false;
                 break;
@@ -1389,7 +1418,8 @@ void Interactor::add_default_tasks()
 bool Interactor::process_option(
     const std::string& option_name,
     const std::string& task_display_name,
-    std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options)
+    std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
+    bool auto_accept_default)
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1415,37 +1445,67 @@ bool Interactor::process_option(
 
     std::vector<const InterfaceData::Option::Case*> selected_cases;
 
+    // 协议：default_case 是 option 的「初始选中值」，不是「跳过交互」。这里只把它解析成预选 case，
+    // 交互流程中仍会列出 cases 让用户确认（回车即采用默认值）；仅自动补全流程直接采用。
+    const InterfaceData::Option::Case* default_case_ptr = nullptr;
+    if (auto* str = std::get_if<std::string>(&opt.default_case); str && !str->empty()) {
+        auto case_iter = std::ranges::find(opt.cases, *str, std::mem_fn(&InterfaceData::Option::Case::name));
+        if (case_iter != opt.cases.end()) {
+            default_case_ptr = &(*case_iter);
+        }
+        else if (opt.type == InterfaceData::Option::Type::Select || opt.type == InterfaceData::Option::Type::Switch) {
+            // 旧实现会把这个不存在的名字直接写进配置，随后被 check_task 判定失效而删掉整个任务
+            LogWarn << "default_case not found in cases, ignoring it" << VAR(option_name) << VAR(*str);
+        }
+    }
+
     switch (opt.type) {
     case InterfaceData::Option::Type::Select: {
-        if (auto* str = std::get_if<std::string>(&opt.default_case); str && !str->empty()) {
-            config_opt.value = *str;
-            auto case_iter = std::ranges::find(opt.cases, *str, std::mem_fn(&InterfaceData::Option::Case::name));
-            if (case_iter != opt.cases.end()) {
-                selected_cases.push_back(&(*case_iter));
-            }
+        if (opt.cases.empty()) {
+            LogError << "Select option must have at least 1 case" << VAR(option_name);
+            return false;
         }
-        else {
-            std::cout << MAA_NS::utf8_to_crt(
-                std::format("\n\n## Select option \"{}\" for \"{}\" ##\n\n", opt_display_name, task_display_name));
-            if (!opt.description.empty()) {
-                std::string desc_text = read_text_content(opt.description);
-                std::cout << MAA_NS::utf8_to_crt(desc_text) << "\n\n";
-            }
-            for (size_t i = 0; i < opt.cases.size(); ++i) {
-                const auto& case_item = opt.cases[i];
-                std::string case_display_name = get_display_name(case_item.name, case_item.label);
-                std::cout << MAA_NS::utf8_to_crt(std::format("\t{}. {}\n", i + 1, case_display_name));
-                if (!case_item.description.empty()) {
-                    std::string case_desc = read_text_content(case_item.description);
-                    std::cout << "\t   " << MAA_NS::utf8_to_crt(case_desc) << "\n";
-                }
-            }
-            std::cout << "\n";
 
-            int case_index = input(opt.cases.size()) - 1;
-            config_opt.value = opt.cases[case_index].name;
-            selected_cases.push_back(&opt.cases[case_index]);
+        if (default_case_ptr && auto_accept_default) {
+            config_opt.value = default_case_ptr->name;
+            selected_cases.push_back(default_case_ptr);
+            break;
         }
+
+        std::cout << MAA_NS::utf8_to_crt(std::format("\n\n## Select option \"{}\" for \"{}\" ##\n\n", opt_display_name, task_display_name));
+        if (!opt.description.empty()) {
+            std::string desc_text = read_text_content(opt.description);
+            std::cout << MAA_NS::utf8_to_crt(desc_text) << "\n\n";
+        }
+
+        size_t default_index = 0; // 1-based, 0 means no default
+        for (size_t i = 0; i < opt.cases.size(); ++i) {
+            const auto& case_item = opt.cases[i];
+            std::string case_display_name = get_display_name(case_item.name, case_item.label);
+            const bool is_default = default_case_ptr == &case_item;
+            if (is_default) {
+                default_index = i + 1;
+            }
+            std::cout << MAA_NS::utf8_to_crt(std::format("\t{}. {}{}\n", i + 1, case_display_name, is_default ? " (default)" : ""));
+            if (!case_item.description.empty()) {
+                std::string case_desc = read_text_content(case_item.description);
+                std::cout << "\t   " << MAA_NS::utf8_to_crt(case_desc) << "\n";
+            }
+        }
+        std::cout << "\n";
+
+        const int selected = input(opt.cases.size(), "Please input", static_cast<int>(default_index));
+        if (s_eof) {
+            return false;
+        }
+        if (selected < 1 || static_cast<size_t>(selected) > opt.cases.size()) {
+            LogError << "Invalid selection" << VAR(option_name) << VAR(selected);
+            return false;
+        }
+
+        const size_t case_index = static_cast<size_t>(selected) - 1;
+        config_opt.value = opt.cases[case_index].name;
+        selected_cases.push_back(&opt.cases[case_index]);
     } break;
 
     case InterfaceData::Option::Type::Switch: {
@@ -1454,19 +1514,84 @@ bool Interactor::process_option(
             LogError << "Switch option must have at least 2 cases" << VAR(option_name) << VAR(opt.cases.size());
             return false;
         }
+
+        static const std::unordered_set<std::string> yes_names = { "Yes", "yes", "Y", "y" };
+        static const std::unordered_set<std::string> no_names = { "No", "no", "N", "n" };
+
+        auto find_named_case = [&](const std::unordered_set<std::string>& names) -> const InterfaceData::Option::Case* {
+            for (const auto& case_item : opt.cases) {
+                if (names.contains(case_item.name)) {
+                    return &case_item;
+                }
+            }
+            return nullptr;
+        };
+        const auto* yes_case = find_named_case(yes_names);
+        const auto* no_case = find_named_case(no_names);
+
+        if (default_case_ptr && auto_accept_default) {
+            config_opt.value = default_case_ptr->name;
+            selected_cases.push_back(default_case_ptr);
+            break;
+        }
+
         std::cout << MAA_NS::utf8_to_crt(std::format("\n\n## Switch option \"{}\" for \"{}\" ##\n\n", opt_display_name, task_display_name));
         if (!opt.description.empty()) {
             std::string desc_text = read_text_content(opt.description);
             std::cout << MAA_NS::utf8_to_crt(desc_text) << "\n\n";
         }
-        std::string case0_name = get_display_name(opt.cases[0].name, opt.cases[0].label);
-        std::string case1_name = get_display_name(opt.cases[1].name, opt.cases[1].label);
-        std::cout << "\t" << MAA_NS::utf8_to_crt(case0_name) << "\n";
-        std::cout << "\t" << MAA_NS::utf8_to_crt(case1_name) << "\n";
-        std::cout << "\nInput Y/N: ";
 
-        static const std::unordered_set<std::string> yes_names = { "Yes", "yes", "Y", "y" };
-        static const std::unordered_set<std::string> no_names = { "No", "no", "N", "n" };
+        // 协议要求 switch 的 case.name 使用 Yes/No 系列。命名不匹配时退回编号选择：
+        // 旧实现的 fallback 会把 Y 与 N 都映射到同一个 case（常见于按 cases[0] 兜底）
+        if (opt.cases.size() != 2 || !yes_case || !no_case) {
+            LogWarn << "Switch option does not contain exactly two Yes/No cases, fall back to numbered selection" << VAR(option_name);
+
+            size_t fallback_default_index = 0;
+            for (size_t i = 0; i < opt.cases.size(); ++i) {
+                const auto& case_item = opt.cases[i];
+                std::string case_display_name = get_display_name(case_item.name, case_item.label);
+                const bool is_default = default_case_ptr == &case_item;
+                if (is_default) {
+                    fallback_default_index = i + 1;
+                }
+                std::cout << MAA_NS::utf8_to_crt(std::format("\t{}. {}{}\n", i + 1, case_display_name, is_default ? " (default)" : ""));
+                if (!case_item.description.empty()) {
+                    std::string case_desc = read_text_content(case_item.description);
+                    std::cout << "\t   " << MAA_NS::utf8_to_crt(case_desc) << "\n";
+                }
+            }
+            std::cout << "\n";
+
+            const int selected = input(opt.cases.size(), "Please input", static_cast<int>(fallback_default_index));
+            if (s_eof) {
+                return false;
+            }
+            if (selected < 1 || static_cast<size_t>(selected) > opt.cases.size()) {
+                LogError << "Invalid selection" << VAR(option_name) << VAR(selected);
+                return false;
+            }
+
+            const auto* fallback_case = &opt.cases[static_cast<size_t>(selected) - 1];
+            selected_cases.push_back(fallback_case);
+            config_opt.value = fallback_case->name;
+            std::cout << "\n";
+            break;
+        }
+
+        const std::string yes_display_name = get_display_name(yes_case->name, yes_case->label);
+        const std::string no_display_name = get_display_name(no_case->name, no_case->label);
+        std::cout << "\tY. " << MAA_NS::utf8_to_crt(yes_display_name) << "\n";
+        std::cout << "\tN. " << MAA_NS::utf8_to_crt(no_display_name) << "\n";
+        std::cout << "\n";
+
+        // default_case 只在能被 Y/N 表达时作为预选值（指向第三个 case 时忽略）
+        const auto* default_yn_case = (default_case_ptr == yes_case || default_case_ptr == no_case) ? default_case_ptr : nullptr;
+        if (default_yn_case) {
+            std::cout << std::format("Input Y/N (default {}): ", default_yn_case == yes_case ? "Y" : "N");
+        }
+        else {
+            std::cout << "Input Y/N: ";
+        }
 
         std::string buffer;
         bool is_yes = false;
@@ -1479,7 +1604,11 @@ bool Interactor::process_option(
                 return false;
             }
 
-            if (yes_names.contains(buffer)) {
+            if (buffer.empty() && default_yn_case) {
+                is_yes = default_yn_case == yes_case;
+                break;
+            }
+            else if (yes_names.contains(buffer)) {
                 is_yes = true;
                 break;
             }
@@ -1492,28 +1621,40 @@ bool Interactor::process_option(
             }
         }
 
-        // Find matching Yes/No case
-        auto find_case = [&](bool find_yes) -> const InterfaceData::Option::Case* {
-            for (const auto& case_item : opt.cases) {
-                bool is_yes_case = yes_names.contains(case_item.name);
-                if (find_yes == is_yes_case) {
-                    return &case_item;
-                }
-            }
-            // Fallback
-            LogWarn << "No matching Yes/No case found, using fallback" << VAR(find_yes);
-            return find_yes ? &opt.cases[0] : &opt.cases[1];
-        };
-
-        const auto* matched_case = find_case(is_yes);
+        const auto* matched_case = is_yes ? yes_case : no_case;
         selected_cases.push_back(matched_case);
         config_opt.value = matched_case->name;
         std::cout << "\n";
     } break;
 
     case InterfaceData::Option::Type::Checkbox: {
+        if (opt.cases.empty()) {
+            LogError << "Checkbox option must have at least 1 case" << VAR(option_name);
+            return false;
+        }
+
+        // 与 select/switch 一致：default_case 只作为「初始选中值」解析成预选编号（1-based），
+        // 交互流程中列出 cases（预选标 [x]，回车即保持预选）；仅自动补全流程直接采用。
+        std::vector<int> default_indexes;
         if (auto* vec = std::get_if<std::vector<std::string>>(&opt.default_case); vec && !vec->empty()) {
-            config_opt.values = *vec;
+            for (const auto& default_name : *vec) {
+                auto case_iter = std::ranges::find(opt.cases, default_name, std::mem_fn(&InterfaceData::Option::Case::name));
+                if (case_iter == opt.cases.end()) {
+                    // 旧实现会把不存在的名字直接写进配置，随后被 check_task 判定失效而删掉整个任务
+                    LogWarn << "default_case not found in cases, ignoring it" << VAR(option_name) << VAR(default_name);
+                    continue;
+                }
+                // 记录 1-based 预选编号，按 cases 顺序排序，与 Configurator 的应用顺序保持一致
+                default_indexes.emplace_back(static_cast<int>(case_iter - opt.cases.begin()) + 1);
+            }
+            std::ranges::sort(default_indexes);
+            default_indexes.erase(std::unique(default_indexes.begin(), default_indexes.end()), default_indexes.end());
+        }
+
+        if (!default_indexes.empty() && auto_accept_default) {
+            for (const int index : default_indexes) {
+                config_opt.values.emplace_back(opt.cases[static_cast<size_t>(index) - 1].name);
+            }
         }
         else {
             std::cout << MAA_NS::utf8_to_crt(
@@ -1525,17 +1666,28 @@ bool Interactor::process_option(
             for (size_t i = 0; i < opt.cases.size(); ++i) {
                 const auto& case_item = opt.cases[i];
                 std::string case_display_name = get_display_name(case_item.name, case_item.label);
-                std::cout << MAA_NS::utf8_to_crt(std::format("\t{}. {}\n", i + 1, case_display_name));
+                const bool is_default = std::ranges::find(default_indexes, static_cast<int>(i + 1)) != default_indexes.end();
+                std::cout << MAA_NS::utf8_to_crt(std::format("\t{}. [{}] {}\n", i + 1, is_default ? "x" : " ", case_display_name));
                 if (!case_item.description.empty()) {
                     std::string case_desc = read_text_content(case_item.description);
                     std::cout << "\t   " << MAA_NS::utf8_to_crt(case_desc) << "\n";
                 }
             }
+            if (!default_indexes.empty()) {
+                std::cout << MAA_NS::utf8_to_crt("\t(empty input keeps the default selection)\n");
+            }
             std::cout << "\n";
 
-            auto indexes = input_multi(opt.cases.size());
+            auto indexes = input_multi(opt.cases.size(), "Please input multiple", default_indexes);
+            if (s_eof) {
+                return false;
+            }
             for (int idx : indexes) {
-                config_opt.values.emplace_back(opt.cases[idx - 1].name);
+                if (idx < 1 || static_cast<size_t>(idx) > opt.cases.size()) {
+                    LogError << "Invalid selection" << VAR(option_name) << VAR(idx);
+                    return false;
+                }
+                config_opt.values.emplace_back(opt.cases[static_cast<size_t>(idx) - 1].name);
             }
         }
 
@@ -1611,7 +1763,7 @@ bool Interactor::process_option(
 
     for (const auto* sc : selected_cases) {
         for (const auto& sub_option_name : sc->option) {
-            if (!process_option(sub_option_name, task_display_name, config_options)) {
+            if (!process_option(sub_option_name, task_display_name, config_options, auto_accept_default)) {
                 return false;
             }
         }
@@ -1877,7 +2029,7 @@ bool Interactor::ensure_pretask_options()
             Configuration::Pretask config_pretask;
             config_pretask.name = identifier;
             for (const auto& option_name : data_pretask.option) {
-                if (!process_option(option_name, display_name, config_pretask.option)) {
+                if (!process_option(option_name, display_name, config_pretask.option, /*auto_accept_default=*/true)) {
                     return false;
                 }
             }
@@ -1905,7 +2057,8 @@ bool Interactor::ensure_pretask_option_tree(
     auto config_option_iter =
         std::ranges::find_if(config_pretask.option, [&](const auto& config_option) { return config_option.name == option_name; });
     if (config_option_iter == config_pretask.option.end()) {
-        return process_option(option_name, pretask_display_name, config_pretask.option);
+        // pretask 选项树补全可能在 -d 直跑时触发，不阻塞：带 default_case 的 option 直接采用默认值
+        return process_option(option_name, pretask_display_name, config_pretask.option, /*auto_accept_default=*/true);
     }
 
     auto data_option_iter = config_.interface_data().option.find(option_name);
