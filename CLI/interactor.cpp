@@ -89,15 +89,24 @@ std::vector<int> input_multi_impl(size_t size, std::string_view prompt, std::spa
         std::istringstream iss(buffer);
         size_t val = 0;
         bool out_of_range = false;
-        while (iss >> val) {
+        bool parse_failed = false;
+        while (!iss.eof()) {
+            iss >> std::ws;
+            if (iss.eof()) {
+                break;
+            }
+            // An integer exceeding size_t also sets failbit on extraction.
+            if (!(iss >> val)) {
+                parse_failed = true;
+                break;
+            }
             if (val == 0 || val > size) {
                 out_of_range = true;
                 break;
             }
             values.emplace_back(static_cast<int>(val));
         }
-        // An integer exceeding size_t also sets failbit on extraction.
-        if (out_of_range || iss.fail()) {
+        if (out_of_range || parse_failed || values.empty()) {
             // 旧实现此处直接 break 出外层循环，会把「越界」当成「没选任何项」静默返回
             fail();
             continue;
