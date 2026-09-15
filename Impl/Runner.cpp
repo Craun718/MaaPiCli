@@ -197,7 +197,7 @@ std::unique_ptr<AgentProcess>
     STARTUPINFOW startup_info = { .cb = sizeof(startup_info) };
     PROCESS_INFORMATION process_info = { };
     if (!CreateProcessW(
-            executable.native().c_str(),
+            nullptr,
             command_line.data(),
             nullptr,
             nullptr,
@@ -285,7 +285,7 @@ std::unique_ptr<AgentProcess>
         if (chdir(cwd.native().c_str()) != 0) {
             _exit(127);
         }
-        execv(executable.native().c_str(), argv.data());
+        execvp(executable.native().c_str(), argv.data());
         char failed = 1;
         std::ignore = write(exec_failed[1], &failed, sizeof(failed));
         _exit(127);
