@@ -1543,8 +1543,8 @@ bool Interactor::process_option(
 
         // 协议要求 switch 的 case.name 使用 Yes/No 系列。命名不匹配时退回编号选择：
         // 旧实现的 fallback 会把 Y 与 N 都映射到同一个 case（常见于按 cases[0] 兜底）
-        if (!yes_case || !no_case) {
-            LogWarn << "Switch cases are not named Yes/No, fall back to numbered selection" << VAR(option_name);
+        if (opt.cases.size() != 2 || !yes_case || !no_case) {
+            LogWarn << "Switch option does not contain exactly two Yes/No cases, fall back to numbered selection" << VAR(option_name);
 
             size_t fallback_default_index = 0;
             for (size_t i = 0; i < opt.cases.size(); ++i) {
@@ -1578,10 +1578,10 @@ bool Interactor::process_option(
             break;
         }
 
-        std::string case0_name = get_display_name(opt.cases[0].name, opt.cases[0].label);
-        std::string case1_name = get_display_name(opt.cases[1].name, opt.cases[1].label);
-        std::cout << "\t" << MAA_NS::utf8_to_crt(case0_name) << "\n";
-        std::cout << "\t" << MAA_NS::utf8_to_crt(case1_name) << "\n";
+        const std::string yes_display_name = get_display_name(yes_case->name, yes_case->label);
+        const std::string no_display_name = get_display_name(no_case->name, no_case->label);
+        std::cout << "\tY. " << MAA_NS::utf8_to_crt(yes_display_name) << "\n";
+        std::cout << "\tN. " << MAA_NS::utf8_to_crt(no_display_name) << "\n";
         std::cout << "\n";
 
         // default_case 只在能被 Y/N 表达时作为预选值（指向第三个 case 时忽略）
