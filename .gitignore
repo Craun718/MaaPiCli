@@ -35,3 +35,6 @@ compile_commands.json
 *.log
 .DS_Store
 Thumbs.db
+
+# WorkBuddy files
+.workbuddy
