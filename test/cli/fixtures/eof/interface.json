@@ -1,0 +1,13 @@
+{
+    "interface_version": 2,
+    "controller": [
+        { "name": "first-controller", "type": "Adb" },
+        { "name": "second-controller", "type": "Adb" }
+    ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] }
+    ],
+    "task": [
+        { "name": "main-task", "entry": "MainTask" }
+    ]
+}

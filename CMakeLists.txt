@@ -12,6 +12,8 @@ find_package(MaaFramework CONFIG REQUIRED)
 file(GLOB_RECURSE maa_pi_cli_header include/ProjectInterface/*.h)
 
 set(maa_pi_cli_core_src
+    CLI/input.cpp
+    CLI/input.h
     CLI/interactor.cpp
     CLI/interactor.h
     Impl/Configurator.cpp
@@ -108,6 +110,24 @@ endif()
 
 if(MaaPiCli_BUILD_TESTS)
     enable_testing()
+
+    add_executable(MaaPiCliInputTest test/cli/input_test.cpp)
+    target_compile_features(MaaPiCliInputTest PRIVATE cxx_std_20)
+    target_link_libraries(MaaPiCliInputTest PRIVATE MaaPiCli::Core)
+    add_test(NAME MaaPiCliInputTest COMMAND MaaPiCliInputTest)
+    set_tests_properties(
+        MaaPiCliInputTest
+        PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
+
+    add_executable(MaaPiCliInteractorTest test/cli/interactor_test.cpp)
+    target_compile_features(MaaPiCliInteractorTest PRIVATE cxx_std_20)
+    target_link_libraries(MaaPiCliInteractorTest PRIVATE MaaPiCli::Core)
+    target_compile_definitions(
+        MaaPiCliInteractorTest PRIVATE MAAPICLI_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/cli/fixtures/eof")
+    add_test(NAME MaaPiCliInteractorTest COMMAND MaaPiCliInteractorTest)
+    set_tests_properties(
+        MaaPiCliInteractorTest
+        PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
 
     add_executable(MaaPiCliParserTest test/parser/parser_test.cpp)
     target_compile_features(MaaPiCliParserTest PRIVATE cxx_std_20)
