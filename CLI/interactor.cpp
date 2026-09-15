@@ -4,9 +4,9 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <iterator>
 #include <optional>
 #include <ranges>
-#include <span>
 #include <unordered_set>
 
 #include <boost/regex.hpp>
@@ -27,8 +27,7 @@
 #include "MaaUtils/Platform.h"
 #include "ProjectInterface/Parser.h"
 #include "ProjectInterface/Runner.h"
-
-static bool s_eof = false;
+#include "input.h"
 
 #if defined(__APPLE__)
 static constexpr bool kPlayCoverSupported = true;
@@ -47,113 +46,6 @@ static constexpr bool kWlRootsSupported = true;
 #else
 static constexpr bool kWlRootsSupported = false;
 #endif
-
-// return [1, size]; an empty input returns defaults when defaults is non-empty and in range
-std::vector<int> input_multi_impl(size_t size, std::string_view prompt, std::span<const int> defaults = { })
-{
-    std::vector<int> values;
-
-    auto fail = [&]() {
-        std::cout << std::format("Invalid value, {} [1-{}]: ", prompt, size);
-        values.clear();
-    };
-
-    auto has_valid_default = [&]() {
-        return !defaults.empty()
-               && std::ranges::all_of(defaults, [&](int value) { return value >= 1 && static_cast<size_t>(value) <= size; });
-    };
-
-    while (true) {
-        std::cin.sync();
-        std::string buffer;
-        std::getline(std::cin, buffer);
-
-        if (std::cin.eof()) {
-            s_eof = true;
-            return { };
-        }
-
-        if (buffer.empty()) {
-            if (has_valid_default()) {
-                return std::vector<int>(defaults.begin(), defaults.end());
-            }
-            fail();
-            continue;
-        }
-
-        if (!std::ranges::all_of(buffer, [](unsigned char c) { return std::isdigit(c) || std::isspace(c); })) {
-            fail();
-            continue;
-        }
-
-        std::istringstream iss(buffer);
-        size_t val = 0;
-        bool out_of_range = false;
-        bool parse_failed = false;
-        while (!iss.eof()) {
-            iss >> std::ws;
-            if (iss.eof()) {
-                break;
-            }
-            // An integer exceeding size_t also sets failbit on extraction.
-            if (!(iss >> val)) {
-                parse_failed = true;
-                break;
-            }
-            if (val == 0 || val > size) {
-                out_of_range = true;
-                break;
-            }
-            values.emplace_back(static_cast<int>(val));
-        }
-        if (out_of_range || parse_failed || values.empty()) {
-            // 旧实现此处直接 break 出外层循环，会把「越界」当成「没选任何项」静默返回
-            fail();
-            continue;
-        }
-        break;
-    }
-
-    return values;
-}
-
-// return [1, size]; an empty input returns default_value when it is in [1, size]
-int input(size_t size, std::string_view prompt = "Please input", int default_value = 0)
-{
-    std::cout << std::format("{} [1-{}]: ", prompt, size);
-
-    auto fail = [&]() {
-        std::cout << std::format("Invalid value, {} [1-{}]: ", prompt, size);
-    };
-
-    const int default_values[] = { default_value };
-    const std::span<const int> defaults = default_value >= 1 ? std::span<const int>(default_values) : std::span<const int> { };
-
-    int val = 0;
-    while (true) {
-        auto values = input_multi_impl(size, prompt, defaults);
-        if (s_eof) {
-            return { };
-        }
-        if (values.size() != 1) {
-            fail();
-            continue;
-        }
-        val = values.front();
-        break;
-    }
-    std::cout << "\n";
-
-    return val;
-}
-
-std::vector<int> input_multi(size_t size, std::string_view prompt = "Please input multiple", std::span<const int> defaults = { })
-{
-    std::cout << std::format("{} [1-{}]: ", prompt, size);
-    auto values = input_multi_impl(size, prompt, defaults);
-    std::cout << "\n";
-    return values;
-}
 
 std::optional<std::string> read_hidden_line()
 {
@@ -201,7 +93,7 @@ std::optional<std::string> read_hidden_line()
     std::string line;
     std::getline(std::cin, line);
     tcsetattr(STDIN_FILENO, TCSANOW, &original);
-    if (std::cin.eof()) {
+    if (!std::cin) {
         return std::nullopt;
     }
     return line;
@@ -320,7 +212,9 @@ bool Interactor::load(const std::filesystem::path& resource_path)
 bool Interactor::interact()
 {
     if (config_.is_first_time_use()) {
-        interact_for_first_time_use();
+        if (!interact_for_first_time_use()) {
+            return input_aborted_;
+        }
         if (!save_config()) {
             return false;
         }
@@ -328,8 +222,12 @@ bool Interactor::interact()
 
     while (true) {
         print_config();
-        if (!interact_once()) {
+        const auto status = interact_once();
+        if (status == ActionStatus::Aborted || status == ActionStatus::Exit) {
             return true;
+        }
+        if (status == ActionStatus::Incomplete) {
+            continue;
         }
         if (!save_config()) {
             return false;
@@ -522,21 +420,29 @@ void Interactor::print_config() const
     print_config_tasks(false);
 }
 
-void Interactor::interact_for_first_time_use()
+bool Interactor::interact_for_first_time_use()
 {
     welcome();
-    select_controller();
-    select_resource();
+    if (!select_controller()) {
+        return false;
+    }
+    if (!select_resource()) {
+        return false;
+    }
 
     // v2.3.0: process global/resource/controller-level options
-    process_level_options(config_.interface_data().global_option, config_.configuration().global_option, "Global");
+    if (!process_level_options(config_.interface_data().global_option, config_.configuration().global_option, "Global")) {
+        return false;
+    }
 
     if (auto res_it = std::ranges::find(
             config_.interface_data().resource,
             config_.configuration().resource,
             std::mem_fn(&MAA_PROJECT_INTERFACE_NS::InterfaceData::Resource::name));
         res_it != config_.interface_data().resource.end()) {
-        process_level_options(res_it->option, config_.configuration().resource_option, "Resource");
+        if (!process_level_options(res_it->option, config_.configuration().resource_option, "Resource")) {
+            return false;
+        }
     }
 
     if (auto ctrl_it = std::ranges::find(
@@ -544,16 +450,22 @@ void Interactor::interact_for_first_time_use()
             config_.configuration().controller.name,
             std::mem_fn(&MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::name));
         ctrl_it != config_.interface_data().controller.end()) {
-        process_level_options(ctrl_it->option, config_.configuration().controller_option, "Controller");
+        if (!process_level_options(ctrl_it->option, config_.configuration().controller_option, "Controller")) {
+            return false;
+        }
     }
 
     // Auto-add tasks with default_check=true
-    add_default_tasks();
+    if (!add_default_tasks()) {
+        return false;
+    }
 
     // If no default tasks were added, let user select manually
     if (config_.configuration().task.empty()) {
-        add_task();
+        return add_task();
     }
+
+    return true;
 }
 
 void Interactor::welcome() const
@@ -607,7 +519,7 @@ void Interactor::welcome() const
     }
 }
 
-bool Interactor::interact_once()
+Interactor::ActionStatus Interactor::interact_once()
 {
     bool has_presets = !config_.interface_data().preset.empty();
 
@@ -628,53 +540,60 @@ bool Interactor::interact_once()
     std::cout << "\n";
 
     int max_action = has_presets ? 8 : 7;
-    int action = input(max_action);
-    if (s_eof) {
-        return false;
+    auto selected_action = input(max_action);
+    if (!selected_action) {
+        input_aborted_ = true;
+        return ActionStatus::Aborted;
     }
+    const int action = *selected_action;
 
     switch (action) {
     case 1:
-        select_controller();
-        break;
+        return action_status(select_controller());
     case 2:
-        select_resource();
-        break;
+        return action_status(select_resource());
     case 3:
-        add_task();
-        break;
+        return action_status(add_task());
     case 4:
-        move_task();
-        break;
+        return action_status(move_task());
     case 5:
-        delete_task();
-        break;
-    case 6:
-        run();
-        mpause();
-        break;
+        return action_status(delete_task());
+    case 6: {
+        const bool completed = run();
+        if (!mpause()) {
+            return ActionStatus::Aborted;
+        }
+        return completed ? ActionStatus::Complete : ActionStatus::Incomplete;
+    }
     case 7:
         if (has_presets) {
-            apply_preset();
+            return action_status(apply_preset());
         }
         else {
-            return false;
+            return ActionStatus::Exit;
         }
-        break;
     case 8:
         if (has_presets) {
-            return false;
+            return ActionStatus::Exit;
         }
         break;
     default:
         LogError << "Invalid action" << VAR(action);
-        return false;
+        return ActionStatus::Incomplete;
     }
 
-    return true;
+    return ActionStatus::Incomplete;
 }
 
-void Interactor::select_controller()
+Interactor::ActionStatus Interactor::action_status(bool completed) const
+{
+    if (completed) {
+        return ActionStatus::Complete;
+    }
+    return input_aborted_ ? ActionStatus::Aborted : ActionStatus::Incomplete;
+}
+
+bool Interactor::select_controller()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -682,7 +601,7 @@ void Interactor::select_controller()
 
     if (all_controllers.empty()) {
         LogError << "Controller is empty";
-        return;
+        return false;
     }
 
     int index = 0;
@@ -705,7 +624,12 @@ void Interactor::select_controller()
             }
         }
         std::cout << "\n";
-        index = input(all_controllers.size()) - 1;
+        auto selected = input(all_controllers.size());
+        if (!selected) {
+            input_aborted_ = true;
+            return false;
+        }
+        index = *selected - 1;
     }
     else {
         index = 0;
@@ -718,16 +642,13 @@ void Interactor::select_controller()
     switch (controller.type) {
     case InterfaceData::Controller::Type::Adb:
         config_.configuration().controller.type = InterfaceData::Controller::Type::Adb;
-        select_adb();
-        break;
+        return select_adb();
     case InterfaceData::Controller::Type::Win32:
         config_.configuration().controller.type = InterfaceData::Controller::Type::Win32;
-        select_win32_hwnd(controller.win32);
-        break;
+        return select_win32_hwnd(controller.win32);
     case InterfaceData::Controller::Type::MacOS:
         config_.configuration().controller.type = InterfaceData::Controller::Type::MacOS;
-        select_macos(controller.macos);
-        break;
+        return select_macos(controller.macos);
     case InterfaceData::Controller::Type::PlayCover:
         if (!kPlayCoverSupported) {
             std::cout << "\nPlayCover controller is only available on macOS.\n";
@@ -737,18 +658,15 @@ void Interactor::select_controller()
             });
             if (has_other_controllers) {
                 std::cout << "Please select another controller.\n\n";
-                mpause();
-                select_controller();
+                return mpause() && select_controller();
             }
             else {
                 std::cout << "No other controllers available.\n\n";
-                mpause();
+                return mpause();
             }
-            return;
         }
         config_.configuration().controller.type = InterfaceData::Controller::Type::PlayCover;
-        select_playcover(controller.playcover);
-        break;
+        return select_playcover(controller.playcover);
     case InterfaceData::Controller::Type::WlRoots:
         if (!kWlRootsSupported) {
             std::cout << "\nWlRoots controller is only available on Linux.\n";
@@ -758,18 +676,15 @@ void Interactor::select_controller()
             });
             if (has_other_controllers) {
                 std::cout << "Please select another controller.\n\n";
-                mpause();
-                select_controller();
+                return mpause() && select_controller();
             }
             else {
                 std::cout << "No other controllers available.\n\n";
-                mpause();
+                return mpause();
             }
-            return;
         }
         config_.configuration().controller.type = InterfaceData::Controller::Type::WlRoots;
-        select_wlroots();
-        break;
+        return select_wlroots();
     case InterfaceData::Controller::Type::Gamepad:
         if (!kGamepadSupported) {
             std::cout << "\nGamepad controller is only available on Windows.\n";
@@ -779,25 +694,24 @@ void Interactor::select_controller()
             });
             if (has_other_controllers) {
                 std::cout << "Please select another controller.\n\n";
-                mpause();
-                select_controller();
+                return mpause() && select_controller();
             }
             else {
                 std::cout << "No other controllers available.\n\n";
-                mpause();
+                return mpause();
             }
-            return;
         }
         config_.configuration().controller.type = InterfaceData::Controller::Type::Gamepad;
-        select_gamepad(controller.gamepad);
-        break;
+        return select_gamepad(controller.gamepad);
     default:
         LogError << "Unknown controller type" << VAR(controller.type);
-        break;
+        return false;
     }
+
+    return true;
 }
 
-void Interactor::select_adb()
+bool Interactor::select_adb()
 {
     std::cout << "### Select ADB ###\n\n";
 
@@ -805,20 +719,24 @@ void Interactor::select_adb()
     std::cout << "\t2. Manual input\n";
     std::cout << "\n";
 
-    int action = input(2);
+    auto selected = input(2);
+    if (!selected) {
+        input_aborted_ = true;
+        return false;
+    }
 
-    switch (action) {
+    switch (*selected) {
     case 1:
-        select_adb_auto_detect();
-        break;
+        return select_adb_auto_detect();
 
     case 2:
-        select_adb_manual_input();
-        break;
+        return select_adb_manual_input();
     }
+
+    return false;
 }
 
-void Interactor::select_adb_auto_detect()
+bool Interactor::select_adb_auto_detect()
 {
     std::cout << "Finding device...\n\n";
 
@@ -830,8 +748,7 @@ void Interactor::select_adb_auto_detect()
     size_t size = MaaToolkitAdbDeviceListSize(list_handle);
     if (size == 0) {
         std::cout << "No device found!\n\n";
-        select_adb();
-        return;
+        return select_adb();
     }
 
     std::cout << "## Select Device ##\n\n";
@@ -847,7 +764,12 @@ void Interactor::select_adb_auto_detect()
     }
     std::cout << "\n";
 
-    int index = input(size) - 1;
+    auto selected = input(size);
+    if (!selected) {
+        input_aborted_ = true;
+        return false;
+    }
+    const size_t index = static_cast<size_t>(*selected - 1);
     auto& adb_config = config_.configuration().adb;
 
     auto device_handle = MaaToolkitAdbDeviceListAt(list_handle, index);
@@ -855,28 +777,34 @@ void Interactor::select_adb_auto_detect()
     adb_config.name = MaaToolkitAdbDeviceGetName(device_handle);
     adb_config.adb_path = MaaToolkitAdbDeviceGetAdbPath(device_handle);
     adb_config.address = MaaToolkitAdbDeviceGetAddress(device_handle);
+
+    return true;
 }
 
-void Interactor::select_adb_manual_input()
+bool Interactor::select_adb_manual_input()
 {
-    std::cout << "Please input ADB path: ";
-    std::cin.sync();
-    std::string adb_path;
-    std::getline(std::cin, adb_path);
-    config_.configuration().adb.adb_path = adb_path;
+    auto adb_path = read_line("Please input ADB path: ");
+    if (!adb_path) {
+        input_aborted_ = true;
+        return false;
+    }
+    config_.configuration().adb.adb_path = *adb_path;
     std::cout << "\n";
 
-    std::cout << "Please input ADB address: ";
-    std::cin.sync();
-    std::string adb_address;
-    std::getline(std::cin, adb_address);
-    config_.configuration().adb.address = adb_address;
+    auto adb_address = read_line("Please input ADB address: ");
+    if (!adb_address) {
+        input_aborted_ = true;
+        return false;
+    }
+    config_.configuration().adb.address = *adb_address;
     std::cout << "\n";
 
-    config_.configuration().adb.name = std::format("{}-{}", adb_address, adb_path);
+    config_.configuration().adb.name = std::format("{}-{}", *adb_address, *adb_path);
+
+    return true;
 }
 
-void Interactor::select_playcover(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::PlayCoverConfig& playcover_config)
+bool Interactor::select_playcover(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::PlayCoverConfig& playcover_config)
 {
     std::cout << "### Configure PlayCover ###\n\n";
 
@@ -891,18 +819,16 @@ void Interactor::select_playcover(const MAA_PROJECT_INTERFACE_NS::InterfaceData:
     std::string default_address = pc.address.empty() ? "127.0.0.1:1717" : pc.address;
 
     // Ask for address (use default if empty input)
-    std::cout << "PlayTools service address (host:port) [" << default_address << "]: ";
-    std::cin.sync();
-    std::string buffer;
-    std::getline(std::cin, buffer);
-
-    if (std::cin.eof()) {
-        s_eof = true;
-        return;
+    auto buffer = read_line(std::format("PlayTools service address (host:port) [{}]: ", default_address));
+    if (!buffer) {
+        input_aborted_ = true;
+        return false;
     }
 
-    pc.address = buffer.empty() ? default_address : buffer;
+    pc.address = buffer->empty() ? default_address : *buffer;
     std::cout << "\n";
+
+    return true;
 }
 
 std::string Interactor::format_win32_config(const MAA_PROJECT_INTERFACE_NS::Configuration::Win32Config& win32_config)
@@ -975,13 +901,18 @@ bool Interactor::select_win32_hwnd(const MAA_PROJECT_INTERFACE_NS::InterfaceData
     }
     std::cout << "\n";
 
-    int index = input(matched_size) - 1;
+    auto selected = input(matched_size);
+    if (!selected) {
+        input_aborted_ = true;
+        return false;
+    }
+    const size_t index = static_cast<size_t>(*selected - 1);
     config_.configuration().win32 = matched_config.at(index);
 
     return true;
 }
 
-void Interactor::select_gamepad(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::GamepadConfig& gamepad_config)
+bool Interactor::select_gamepad(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::GamepadConfig& gamepad_config)
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1042,10 +973,15 @@ void Interactor::select_gamepad(const MAA_PROJECT_INTERFACE_NS::InterfaceData::C
                 }
                 std::cout << "\n";
 
-                int index = input(matched_size) - 1;
-                config_.configuration().gamepad.hwnd = matched_config.at(index).hwnd;
-                config_.configuration().gamepad.class_name = matched_config.at(index).class_name;
-                config_.configuration().gamepad.window_name = matched_config.at(index).window_name;
+                auto selected = input(matched_size);
+                if (!selected) {
+                    input_aborted_ = true;
+                    return false;
+                }
+                const auto& window = matched_config.at(static_cast<size_t>(*selected - 1));
+                config_.configuration().gamepad.hwnd = window.hwnd;
+                config_.configuration().gamepad.class_name = window.class_name;
+                config_.configuration().gamepad.window_name = window.window_name;
             }
         }
     }
@@ -1056,13 +992,19 @@ void Interactor::select_gamepad(const MAA_PROJECT_INTERFACE_NS::InterfaceData::C
     std::cout << "\t2. DualShock 4 (PS4)\n";
     std::cout << "\n";
 
-    int type_index = input(2);
-    config_.configuration().gamepad.gamepad_type = (type_index == 1) ? "Xbox360" : "DualShock4";
+    auto type_index = input(2);
+    if (!type_index) {
+        input_aborted_ = true;
+        return false;
+    }
+    config_.configuration().gamepad.gamepad_type = (*type_index == 1) ? "Xbox360" : "DualShock4";
 
     std::cout << "\n";
+
+    return true;
 }
 
-void Interactor::select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::MacOSConfig& macos_config)
+bool Interactor::select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::MacOSConfig& macos_config)
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1073,14 +1015,12 @@ void Interactor::select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Con
     // Select window using title_regex
     std::string title_regex_str = macos_config.title_regex;
     if (title_regex_str.empty()) {
-        std::cout << "Title regex: ";
-        std::cin.sync();
-        std::getline(std::cin, title_regex_str);
-
-        if (std::cin.eof()) {
-            s_eof = true;
-            return;
+        auto input_regex = read_line("Title regex: ");
+        if (!input_regex) {
+            input_aborted_ = true;
+            return false;
         }
+        title_regex_str = std::move(*input_regex);
     }
 
     if (!title_regex_str.empty()) {
@@ -1120,25 +1060,30 @@ void Interactor::select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Con
                     }
                     std::cout << "\n";
 
-                    int index = input(matched_windows.size()) - 1;
-                    mac.window_id = matched_windows[index].first;
-                    mac.title = matched_windows[index].second;
+                    auto selected = input(matched_windows.size());
+                    if (!selected) {
+                        input_aborted_ = true;
+                        return false;
+                    }
+                    const auto& window = matched_windows.at(static_cast<size_t>(*selected - 1));
+                    mac.window_id = window.first;
+                    mac.title = window.second;
                 }
             }
             else {
                 LogWarn << "No window matched regex" << VAR(title_regex_str);
                 std::cout << "No window found matching regex.\n\n";
-                return;
+                return false;
             }
         }
         else {
             LogError << "Invalid title regex" << VAR(title_regex_str);
-            return;
+            return false;
         }
     }
     else {
         std::cout << "Title regex is required.\n\n";
-        return;
+        return false;
     }
 
     // Use screencap_method from interface.json if available
@@ -1156,33 +1101,28 @@ void Interactor::select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Con
     std::string default_input = mac.input.empty() ? "GlobalEvent" : mac.input;
 
     // Ask for screencap_method
-    std::cout << "Screencap method [" << default_screencap << "]: ";
-    std::cin.sync();
-    std::string buffer;
-    std::getline(std::cin, buffer);
-
-    if (std::cin.eof()) {
-        s_eof = true;
-        return;
+    auto buffer = read_line(std::format("Screencap method [{}]: ", default_screencap));
+    if (!buffer) {
+        input_aborted_ = true;
+        return false;
     }
 
-    mac.screencap = buffer.empty() ? default_screencap : buffer;
+    mac.screencap = buffer->empty() ? default_screencap : *buffer;
 
     // Ask for input_method
-    std::cout << "Input method [" << default_input << "]: ";
-    std::cin.sync();
-    std::getline(std::cin, buffer);
-
-    if (std::cin.eof()) {
-        s_eof = true;
-        return;
+    buffer = read_line(std::format("Input method [{}]: ", default_input));
+    if (!buffer) {
+        input_aborted_ = true;
+        return false;
     }
 
-    mac.input = buffer.empty() ? default_input : buffer;
+    mac.input = buffer->empty() ? default_input : *buffer;
     std::cout << "\n";
+
+    return true;
 }
 
-void Interactor::select_wlroots()
+bool Interactor::select_wlroots()
 {
     std::cout << "### Select Wayland Socket ###\n\n";
 
@@ -1190,20 +1130,24 @@ void Interactor::select_wlroots()
     std::cout << "\t2. Manual input\n";
     std::cout << "\n";
 
-    int action = input(2);
+    auto selected = input(2);
+    if (!selected) {
+        input_aborted_ = true;
+        return false;
+    }
 
-    switch (action) {
+    switch (*selected) {
     case 1:
-        select_wlroots_auto_detect();
-        break;
+        return select_wlroots_auto_detect();
 
     case 2:
-        select_wlroots_manual_input();
-        break;
+        return select_wlroots_manual_input();
     }
+
+    return false;
 }
 
-void Interactor::select_wlroots_auto_detect()
+bool Interactor::select_wlroots_auto_detect()
 {
     std::cout << "Finding sockets...\n\n";
 
@@ -1215,8 +1159,7 @@ void Interactor::select_wlroots_auto_detect()
     size_t size = MaaToolkitDesktopWindowListSize(list_handle);
     if (size == 0) {
         std::cout << "No sockets found!\n\n";
-        select_wlroots();
-        return;
+        return select_wlroots();
     }
 
     std::cout << "## Select Socket ##\n\n";
@@ -1232,25 +1175,35 @@ void Interactor::select_wlroots_auto_detect()
     }
     std::cout << "\n";
 
-    int index = input(size) - 1;
+    auto selected = input(size);
+    if (!selected) {
+        input_aborted_ = true;
+        return false;
+    }
+    const size_t index = static_cast<size_t>(*selected - 1);
     auto& wlr_config = config_.configuration().wlroots;
 
     auto compositor = MaaToolkitDesktopWindowListAt(list_handle, index);
 
     wlr_config.wlr_socket_path = MaaToolkitDesktopWindowGetClassName(compositor);
+
+    return true;
 }
 
-void Interactor::select_wlroots_manual_input()
+bool Interactor::select_wlroots_manual_input()
 {
-    std::cout << "Please input Wayland socket path: ";
-    std::cin.sync();
-    std::string socket_path;
-    std::getline(std::cin, socket_path);
-    config_.configuration().wlroots.wlr_socket_path = socket_path;
+    auto socket_path = read_line("Please input Wayland socket path: ");
+    if (!socket_path) {
+        input_aborted_ = true;
+        return false;
+    }
+    config_.configuration().wlroots.wlr_socket_path = *socket_path;
     std::cout << "\n";
+
+    return true;
 }
 
-void Interactor::select_resource()
+bool Interactor::select_resource()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1259,7 +1212,7 @@ void Interactor::select_resource()
 
     if (all_resources.empty()) {
         LogError << "Resource is empty";
-        return;
+        return false;
     }
 
     // Filter resources by current controller
@@ -1273,7 +1226,7 @@ void Interactor::select_resource()
 
     if (available_resources.empty()) {
         LogError << "No resource available for controller" << VAR(current_controller);
-        return;
+        return false;
     }
 
     int index = 0;
@@ -1289,7 +1242,12 @@ void Interactor::select_resource()
             }
         }
         std::cout << "\n";
-        index = input(available_resources.size()) - 1;
+        auto selected = input(available_resources.size());
+        if (!selected) {
+            input_aborted_ = true;
+            return false;
+        }
+        index = *selected - 1;
     }
     else {
         index = 0;
@@ -1297,9 +1255,11 @@ void Interactor::select_resource()
     const auto& resource = *available_resources[index];
 
     config_.configuration().resource = resource.name;
+
+    return true;
 }
 
-void Interactor::add_task()
+bool Interactor::add_task()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1310,8 +1270,7 @@ void Interactor::add_task()
     if (all_data_tasks.empty()) {
         LogError << "Task is empty";
         std::cout << "No tasks available.\n\n";
-        mpause();
-        return;
+        return mpause();
     }
 
     // Filter tasks by current resource and controller
@@ -1330,7 +1289,7 @@ void Interactor::add_task()
 
     if (available_tasks.empty()) {
         LogError << "No task available for resource" << VAR(current_resource) << "and controller" << VAR(current_controller);
-        return;
+        return false;
     }
 
     std::cout << "### Add task ###\n\n";
@@ -1345,28 +1304,36 @@ void Interactor::add_task()
     }
     std::cout << "\n";
     auto input_indexes = input_multi(available_tasks.size());
+    if (!input_indexes) {
+        input_aborted_ = true;
+        return false;
+    }
 
-    for (int index : input_indexes) {
+    std::vector<Configuration::Task> selected_tasks;
+    for (int index : *input_indexes) {
         const auto& data_task = *available_tasks[index - 1];
         std::string task_display_name = get_display_name(data_task.name, data_task.label);
 
         std::vector<Configuration::Option> config_options;
-        bool all_options_ok = true;
         for (const auto& option_name : data_task.option) {
             if (!process_option(option_name, task_display_name, config_options)) {
-                LogWarn << "Failed to process option, skipping task" << VAR(data_task.name) << VAR(option_name);
-                all_options_ok = false;
-                break;
+                LogWarn << "Failed to process option" << VAR(data_task.name) << VAR(option_name);
+                return false;
             }
         }
 
-        if (all_options_ok) {
-            config_.configuration().task.emplace_back(Configuration::Task { .name = data_task.name, .option = std::move(config_options) });
-        }
+        selected_tasks.emplace_back(Configuration::Task { .name = data_task.name, .option = std::move(config_options) });
     }
+
+    config_.configuration().task.insert(
+        config_.configuration().task.end(),
+        std::make_move_iterator(selected_tasks.begin()),
+        std::make_move_iterator(selected_tasks.end()));
+
+    return true;
 }
 
-void Interactor::add_default_tasks()
+bool Interactor::add_default_tasks()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1394,25 +1361,23 @@ void Interactor::add_default_tasks()
 
         // Process options for this task
         std::vector<Configuration::Option> config_options;
-        bool all_options_ok = true;
         for (const auto& option_name : task.option) {
             // 自动添加 default_check 任务：带 default_case 的 option 直接采用默认值，不打断批量添加
             if (!process_option(option_name, task_display_name, config_options, /*auto_accept_default=*/true)) {
-                LogWarn << "Failed to process option for default task, skipping" << VAR(task.name) << VAR(option_name);
-                all_options_ok = false;
-                break;
+                LogWarn << "Failed to process option for default task" << VAR(task.name) << VAR(option_name);
+                return false;
             }
         }
 
-        if (all_options_ok) {
-            config_.configuration().task.emplace_back(Configuration::Task { .name = task.name, .option = std::move(config_options) });
-            std::cout << "Auto-added default task: " << MAA_NS::utf8_to_crt(task_display_name) << "\n";
-        }
+        config_.configuration().task.emplace_back(Configuration::Task { .name = task.name, .option = std::move(config_options) });
+        std::cout << "Auto-added default task: " << MAA_NS::utf8_to_crt(task_display_name) << "\n";
     }
 
     if (!config_.configuration().task.empty()) {
         std::cout << "\n";
     }
+
+    return true;
 }
 
 bool Interactor::process_option(
@@ -1494,16 +1459,17 @@ bool Interactor::process_option(
         }
         std::cout << "\n";
 
-        const int selected = input(opt.cases.size(), "Please input", static_cast<int>(default_index));
-        if (s_eof) {
+        const auto selected = input(opt.cases.size(), "Please input", static_cast<int>(default_index));
+        if (!selected) {
+            input_aborted_ = true;
             return false;
         }
-        if (selected < 1 || static_cast<size_t>(selected) > opt.cases.size()) {
-            LogError << "Invalid selection" << VAR(option_name) << VAR(selected);
+        if (*selected < 1 || static_cast<size_t>(*selected) > opt.cases.size()) {
+            LogError << "Invalid selection" << VAR(option_name) << VAR(*selected);
             return false;
         }
 
-        const size_t case_index = static_cast<size_t>(selected) - 1;
+        const size_t case_index = static_cast<size_t>(*selected) - 1;
         config_opt.value = opt.cases[case_index].name;
         selected_cases.push_back(&opt.cases[case_index]);
     } break;
@@ -1562,16 +1528,17 @@ bool Interactor::process_option(
             }
             std::cout << "\n";
 
-            const int selected = input(opt.cases.size(), "Please input", static_cast<int>(fallback_default_index));
-            if (s_eof) {
+            const auto selected = input(opt.cases.size(), "Please input", static_cast<int>(fallback_default_index));
+            if (!selected) {
+                input_aborted_ = true;
                 return false;
             }
-            if (selected < 1 || static_cast<size_t>(selected) > opt.cases.size()) {
-                LogError << "Invalid selection" << VAR(option_name) << VAR(selected);
+            if (*selected < 1 || static_cast<size_t>(*selected) > opt.cases.size()) {
+                LogError << "Invalid selection" << VAR(option_name) << VAR(*selected);
                 return false;
             }
 
-            const auto* fallback_case = &opt.cases[static_cast<size_t>(selected) - 1];
+            const auto* fallback_case = &opt.cases[static_cast<size_t>(*selected) - 1];
             selected_cases.push_back(fallback_case);
             config_opt.value = fallback_case->name;
             std::cout << "\n";
@@ -1596,13 +1563,12 @@ bool Interactor::process_option(
         std::string buffer;
         bool is_yes = false;
         while (true) {
-            std::cin.sync();
-            std::getline(std::cin, buffer);
-
-            if (std::cin.eof()) {
-                s_eof = true;
+            auto input_buffer = read_line();
+            if (!input_buffer) {
+                input_aborted_ = true;
                 return false;
             }
+            buffer = std::move(*input_buffer);
 
             if (buffer.empty() && default_yn_case) {
                 is_yes = default_yn_case == yes_case;
@@ -1679,10 +1645,11 @@ bool Interactor::process_option(
             std::cout << "\n";
 
             auto indexes = input_multi(opt.cases.size(), "Please input multiple", default_indexes);
-            if (s_eof) {
+            if (!indexes) {
+                input_aborted_ = true;
                 return false;
             }
-            for (int idx : indexes) {
+            for (int idx : *indexes) {
                 if (idx < 1 || static_cast<size_t>(idx) > opt.cases.size()) {
                     LogError << "Invalid selection" << VAR(option_name) << VAR(idx);
                     return false;
@@ -1715,20 +1682,30 @@ bool Interactor::process_option(
             }
             std::cout << MAA_NS::utf8_to_crt(std::format("{} [{}]: ", input_display_name, input_def.password ? "********" : default_val));
 
-            std::cin.sync();
-            std::string buffer;
-            if (input_def.password) {
-                auto hidden_input = read_hidden_line();
-                if (!hidden_input) {
-                    return false;
+            auto read_input_value = [&]() -> std::optional<std::string> {
+                if (input_def.password) {
+                    auto hidden_input = read_hidden_line();
+                    if (!hidden_input) {
+                        input_aborted_ = true;
+                        return std::nullopt;
+                    }
+                    return hidden_input;
                 }
-                buffer = std::move(*hidden_input);
-            }
-            else {
-                std::getline(std::cin, buffer);
+
+                auto plain_input = read_line();
+                if (!plain_input) {
+                    input_aborted_ = true;
+                    return std::nullopt;
+                }
+                return plain_input;
+            };
+
+            auto buffer = read_input_value();
+            if (!buffer) {
+                return false;
             }
 
-            std::string value = buffer.empty() ? default_val : buffer;
+            std::string value = buffer->empty() ? default_val : *buffer;
 
             if (!input_def.verify.empty()) {
                 if (auto pattern = MAA_NS::regex_valid(MAA_NS::to_u16(input_def.verify))) {
@@ -1737,17 +1714,11 @@ bool Interactor::process_option(
                         std::string error_msg =
                             input_def.pattern_msg.empty() ? "Invalid input, please retry: " : input_def.pattern_msg + ": ";
                         std::cout << MAA_NS::utf8_to_crt(error_msg);
-                        if (input_def.password) {
-                            auto hidden_input = read_hidden_line();
-                            if (!hidden_input) {
-                                return false;
-                            }
-                            buffer = std::move(*hidden_input);
+                        buffer = read_input_value();
+                        if (!buffer) {
+                            return false;
                         }
-                        else {
-                            std::getline(std::cin, buffer);
-                        }
-                        value = buffer.empty() ? default_val : buffer;
+                        value = buffer->empty() ? default_val : *buffer;
                         value_u16 = MAA_NS::to_u16(value);
                     }
                 }
@@ -1759,32 +1730,32 @@ bool Interactor::process_option(
     } break;
     }
 
-    config_options.emplace_back(std::move(config_opt));
-
+    std::vector<Configuration::Option> nested_options;
     for (const auto* sc : selected_cases) {
         for (const auto& sub_option_name : sc->option) {
-            if (!process_option(sub_option_name, task_display_name, config_options, auto_accept_default)) {
+            if (!process_option(sub_option_name, task_display_name, nested_options, auto_accept_default)) {
                 return false;
             }
         }
     }
 
+    config_options.emplace_back(std::move(config_opt));
+    config_options.insert(
+        config_options.end(),
+        std::make_move_iterator(nested_options.begin()),
+        std::make_move_iterator(nested_options.end()));
+
     return true;
 }
 
-void Interactor::edit_task()
-{
-    // TODO
-}
-
-void Interactor::delete_task()
+bool Interactor::delete_task()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     auto& all_config_tasks = config_.configuration().task;
     if (all_config_tasks.empty()) {
         LogError << "Task is empty";
-        return;
+        return false;
     }
 
     std::cout << "### Delete task ###\n\n";
@@ -1792,36 +1763,86 @@ void Interactor::delete_task()
     print_config_tasks();
 
     auto input_indexes = input_multi(all_config_tasks.size());
-
-    std::unordered_set<int> indexes(input_indexes.begin(), input_indexes.end());
-    std::vector<int> sorted_indexes(indexes.begin(), indexes.end());
-    std::sort(sorted_indexes.begin(), sorted_indexes.end(), std::greater<int>());
-
-    for (int index : sorted_indexes) {
-        all_config_tasks.erase(all_config_tasks.begin() + index - 1);
+    if (!input_indexes) {
+        input_aborted_ = true;
+        return false;
     }
+
+    std::unordered_set<size_t> indexes;
+    for (int index : *input_indexes) {
+        indexes.insert(static_cast<size_t>(index - 1));
+    }
+
+    std::vector<Configuration::Task> remaining_tasks;
+    remaining_tasks.reserve(all_config_tasks.size());
+    for (size_t i = 0; i < all_config_tasks.size(); ++i) {
+        if (!indexes.contains(i)) {
+            remaining_tasks.emplace_back(std::move(all_config_tasks[i]));
+        }
+    }
+    all_config_tasks = std::move(remaining_tasks);
+
+    return true;
 }
 
-void Interactor::move_task()
+bool Interactor::move_task()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     auto& all_config_tasks = config_.configuration().task;
     if (all_config_tasks.empty()) {
         LogError << "Task is empty";
-        return;
+        return false;
     }
 
     std::cout << "### Move task ###\n\n";
 
     print_config_tasks(true);
 
-    int from_index = input(all_config_tasks.size(), "From") - 1;
-    int to_index = input(all_config_tasks.size(), "To") - 1;
+    auto from = input(all_config_tasks.size(), "From");
+    if (!from) {
+        input_aborted_ = true;
+        return false;
+    }
+    auto to = input(all_config_tasks.size(), "To");
+    if (!to) {
+        input_aborted_ = true;
+        return false;
+    }
 
+    const size_t from_index = static_cast<size_t>(*from - 1);
+    const size_t to_index = static_cast<size_t>(*to - 1);
     auto task = std::move(all_config_tasks[from_index]);
     all_config_tasks.erase(all_config_tasks.begin() + from_index);
     all_config_tasks.insert(all_config_tasks.begin() + to_index, std::move(task));
+
+    return true;
+}
+
+bool Interactor::process_level_options(
+    const std::vector<std::string>& option_names,
+    std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
+    const std::string& level_label)
+{
+    if (option_names.empty()) {
+        return true;
+    }
+
+    std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option> new_options;
+    for (const auto& option_name : option_names) {
+        if (!process_option(option_name, level_label, new_options)) {
+            LogWarn << "Failed to process" << level_label << "option" << VAR(option_name);
+            return false;
+        }
+    }
+
+    config_options = std::move(new_options);
+    return true;
+}
+
+void Interactor::edit_task()
+{
+    // TODO
 }
 
 void Interactor::print_config_tasks(bool with_index) const
@@ -2127,38 +2148,24 @@ bool Interactor::save_config()
     return false;
 }
 
-void Interactor::mpause() const
+bool Interactor::mpause()
 {
-    std::cout << "\nPress Enter to continue...";
-    std::cin.sync();
-    std::cin.get();
+    auto line = read_line("\nPress Enter to continue...");
+    if (!line) {
+        input_aborted_ = true;
+        return false;
+    }
+    return true;
 }
 
-void Interactor::process_level_options(
-    const std::vector<std::string>& option_names,
-    std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
-    const std::string& level_label)
-{
-    if (option_names.empty()) {
-        return;
-    }
-
-    config_options.clear();
-    for (const auto& option_name : option_names) {
-        if (!process_option(option_name, level_label, config_options)) {
-            LogWarn << "Failed to process" << level_label << "option" << VAR(option_name);
-        }
-    }
-}
-
-void Interactor::apply_preset()
+bool Interactor::apply_preset()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     const auto& presets = config_.interface_data().preset;
     if (presets.empty()) {
         std::cout << "No presets available.\n\n";
-        return;
+        return false;
     }
 
     std::cout << "### Apply preset ###\n\n";
@@ -2173,10 +2180,14 @@ void Interactor::apply_preset()
     }
     std::cout << "\n";
 
-    int index = input(presets.size()) - 1;
-    const auto& preset = presets[index];
+    auto selected = input(presets.size());
+    if (!selected) {
+        input_aborted_ = true;
+        return false;
+    }
+    const auto& preset = presets.at(static_cast<size_t>(*selected - 1));
 
-    config_.configuration().task.clear();
+    std::vector<Configuration::Task> preset_tasks;
     for (const auto& preset_task : preset.task) {
         if (!preset_task.enabled) {
             continue;
@@ -2230,11 +2241,14 @@ void Interactor::apply_preset()
             config_task.option.emplace_back(std::move(config_opt));
         }
 
-        config_.configuration().task.emplace_back(std::move(config_task));
+        preset_tasks.emplace_back(std::move(config_task));
     }
 
+    config_.configuration().task = std::move(preset_tasks);
     std::string preset_display = get_display_name(preset.name, preset.label);
     std::cout << "Applied preset: " << MAA_NS::utf8_to_crt(preset_display) << "\n\n";
+
+    return true;
 }
 
 std::string Interactor::get_display_name(const std::string& name, const std::string& label) const

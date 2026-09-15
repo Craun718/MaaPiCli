@@ -13,33 +13,42 @@ public:
     bool run();
 
 private:
-    void interact_for_first_time_use();
+    enum class ActionStatus
+    {
+        Incomplete,
+        Complete,
+        Exit,
+        Aborted,
+    };
+
+    bool interact_for_first_time_use();
 
     void welcome() const;
-    bool interact_once();
+    ActionStatus interact_once();
+    ActionStatus action_status(bool completed) const;
 
-    void select_controller();
-    void select_adb();
-    void select_adb_auto_detect();
-    void select_adb_manual_input();
+    bool select_controller();
+    bool select_adb();
+    bool select_adb_auto_detect();
+    bool select_adb_manual_input();
 
     bool select_win32_hwnd(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::Win32Config& win32_config);
-    void select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::MacOSConfig& macos_config);
-    void select_playcover(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::PlayCoverConfig& playcover_config);
-    void select_gamepad(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::GamepadConfig& gamepad_config);
-    void select_wlroots();
-    void select_wlroots_auto_detect();
-    void select_wlroots_manual_input();
+    bool select_macos(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::MacOSConfig& macos_config);
+    bool select_playcover(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::PlayCoverConfig& playcover_config);
+    bool select_gamepad(const MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::GamepadConfig& gamepad_config);
+    bool select_wlroots();
+    bool select_wlroots_auto_detect();
+    bool select_wlroots_manual_input();
 
-    void select_resource();
-    void add_task();
-    void add_default_tasks();
+    bool select_resource();
+    bool add_task();
+    bool add_default_tasks();
     void edit_task();
-    void delete_task();
-    void move_task();
-    void apply_preset();
+    bool delete_task();
+    bool move_task();
+    bool apply_preset();
 
-    void process_level_options(
+    bool process_level_options(
         const std::vector<std::string>& option_names,
         std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
         const std::string& level_label);
@@ -67,7 +76,7 @@ private:
 
     bool save_config();
 
-    void mpause() const;
+    bool mpause();
 
     static std::string format_win32_config(const MAA_PROJECT_INTERFACE_NS::Configuration::Win32Config& win32_config);
     static std::string format_gamepad_config(const MAA_PROJECT_INTERFACE_NS::Configuration::GamepadConfig& gamepad_config);
@@ -96,4 +105,5 @@ private:
 private:
     MAA_PROJECT_INTERFACE_NS::Configurator config_;
     std::filesystem::path user_path_;
+    bool input_aborted_ = false;
 };
