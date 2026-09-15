@@ -96,7 +96,8 @@ std::vector<int> input_multi_impl(size_t size, std::string_view prompt, std::spa
             }
             values.emplace_back(static_cast<int>(val));
         }
-        if (out_of_range) {
+        // An integer exceeding size_t also sets failbit on extraction.
+        if (out_of_range || iss.fail()) {
             // 旧实现此处直接 break 出外层循环，会把「越界」当成「没选任何项」静默返回
             fail();
             continue;
