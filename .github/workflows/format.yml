@@ -35,18 +35,65 @@ jobs:
         runs-on: macos-latest
         steps:
             - uses: actions/checkout@v7
+              with:
+                  repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+                  ref: ${{ github.event.pull_request.head.sha || github.ref }}
+                  fetch-depth: 0
 
             - name: Install clang-format
               run: |
                   brew install clang-format
                   clang-format --version
 
-            - name: Check formatting
+            - name: Format sources
+              id: format
+              env:
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
               run: |
-                  files="$(
-                    git ls-files \
-                      '*.c' '*.cc' '*.cpp' '*.cppm' '*.cxx' \
-                      '*.h' '*.hh' '*.hpp' '*.hxx' '*.h++'
-                  )"
-                  test -n "$files"
-                  xargs clang-format --dry-run --Werror <<< "$files"
+                  patterns=(
+                    '*.c' '*.cc' '*.cpp' '*.cppm' '*.cxx'
+                    '*.h' '*.hh' '*.hpp' '*.hxx' '*.h++'
+                  )
+                  if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+                      files="$(
+                        git diff --name-only --diff-filter=ACMRT \
+                          "${BASE_SHA}...${HEAD_SHA}" -- "${patterns[@]}"
+                      )"
+                  else
+                      files="$(git ls-files -- "${patterns[@]}")"
+                  fi
+
+                  if [[ -z "$files" ]]; then
+                      echo "changed=false" >> "$GITHUB_OUTPUT"
+                      exit 0
+                  fi
+
+                  while IFS= read -r file; do
+                      clang-format -i "$file"
+                  done <<< "$files"
+
+                  if git diff --quiet; then
+                      echo "changed=false" >> "$GITHUB_OUTPUT"
+                  else
+                      git diff --binary --color=never > "${RUNNER_TEMP}/clang-format.patch"
+                      echo "changed=true" >> "$GITHUB_OUTPUT"
+
+                      {
+                          echo '### clang-format changes'
+                          echo
+                          echo 'The format check failed. Formatted changes are available as the `clang-format.patch` workflow artifact.'
+                      } >> "$GITHUB_STEP_SUMMARY"
+                      exit 1
+                  fi
+
+            - name: Upload formatting patch
+              if: >-
+                failure() &&
+                steps.format.outputs.changed == 'true' &&
+                steps.format.conclusion == 'failure'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: clang-format.patch
+                  path: ${{ runner.temp }}/clang-format.patch
+                  if-no-files-found: error
