@@ -752,6 +752,36 @@ int main()
             !std::filesystem::exists(target_config_path.string() + ".tmp"),
             "a symlinked configuration save should clean its temporary file");
 
+        const auto nested_directory = user_dir / "config/profiles";
+        const auto nested_config_path = nested_directory / "nested-config.json";
+        std::filesystem::create_directories(nested_directory);
+        {
+            std::ofstream nested_stream(nested_config_path);
+            nested_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": []
+}
+)json";
+        }
+        std::filesystem::remove(linked_config_path);
+        std::filesystem::create_symlink("profiles/nested-config.json", linked_config_path);
+
+        MAA_PROJECT_INTERFACE_NS::Configurator nested_configurator;
+        require(nested_configurator.load(resource_dir, user_dir), "the nested symlink configuration fixture should load");
+        nested_configurator.configuration().resource = "other-resource";
+        require(nested_configurator.save(user_dir), "the nested symlink configuration fixture should save");
+        require(
+            std::filesystem::is_symlink(std::filesystem::symlink_status(linked_config_path)),
+            "saving should preserve a nested configuration symlink");
+        const auto saved_nested_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(nested_config_path);
+        require(
+            saved_nested_config && saved_nested_config->resource == "other-resource",
+            "a nested configuration target should be updated in place");
+        require(
+            !std::filesystem::exists(nested_config_path.string() + ".tmp"),
+            "a nested configuration save should clean its temporary file");
+
         const auto external_config_path = user_dir / "linked-config.json";
         {
             std::ofstream external_stream(external_config_path);
