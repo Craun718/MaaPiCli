@@ -1,8 +1,18 @@
 #include "ProjectInterface/Configurator.h"
 
+#include <cerrno>
+#include <fstream>
 #include <ranges>
 #include <unordered_map>
 #include <unordered_set>
+
+#ifdef _WIN32
+#include "MaaUtils/SafeWindows.hpp"
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 #include "MaaFramework/Utility/MaaUtility.h"
 #include "MaaUtils/Logger.h"
@@ -179,6 +189,91 @@ bool transform_stored_passwords(
     return true;
 }
 
+class ConfigFileLock
+{
+public:
+    explicit ConfigFileLock(const std::filesystem::path& user_dir)
+    {
+        lock_path_ = user_dir / "config" / ".maa_pi_config.lock";
+        std::filesystem::create_directories(lock_path_.parent_path());
+
+#ifdef _WIN32
+        handle_ = CreateFileW(lock_path_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle_ == INVALID_HANDLE_VALUE) {
+            LogError << "Failed to open configuration lock" << VAR(lock_path_) << VAR(GetLastError());
+            return;
+        }
+
+        OVERLAPPED overlapped { };
+        if (!LockFileEx(handle_, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &overlapped)) {
+            LogError << "Failed to lock configuration" << VAR(lock_path_) << VAR(GetLastError());
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+        }
+#else
+        descriptor_ = ::open(lock_path_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+        if (descriptor_ < 0) {
+            LogError << "Failed to open configuration lock" << VAR(lock_path_) << VAR(errno);
+            return;
+        }
+
+        if (::flock(descriptor_, LOCK_EX) != 0) {
+            LogError << "Failed to lock configuration" << VAR(lock_path_) << VAR(errno);
+            ::close(descriptor_);
+            descriptor_ = -1;
+        }
+#endif
+    }
+
+    ~ConfigFileLock()
+    {
+#ifdef _WIN32
+        if (handle_ != INVALID_HANDLE_VALUE) {
+            OVERLAPPED overlapped { };
+            UnlockFileEx(handle_, 0, MAXDWORD, MAXDWORD, &overlapped);
+            CloseHandle(handle_);
+        }
+#else
+        if (descriptor_ >= 0) {
+            ::flock(descriptor_, LOCK_UN);
+            ::close(descriptor_);
+        }
+#endif
+    }
+
+    bool valid() const
+    {
+#ifdef _WIN32
+        return handle_ != INVALID_HANDLE_VALUE;
+#else
+        return descriptor_ >= 0;
+#endif
+    }
+
+private:
+    ConfigFileLock(const ConfigFileLock&) = delete;
+    ConfigFileLock& operator=(const ConfigFileLock&) = delete;
+
+    std::filesystem::path lock_path_;
+#ifdef _WIN32
+    HANDLE handle_ = INVALID_HANDLE_VALUE;
+#else
+    int descriptor_ = -1;
+#endif
+};
+
+bool write_configuration(const Configuration& config, const std::filesystem::path& config_path)
+{
+    std::ofstream ofs(config_path, std::ios::trunc);
+    if (!ofs.is_open()) {
+        LogError << "failed to open" << VAR(config_path);
+        return false;
+    }
+
+    ofs << config.to_json();
+    return ofs.good();
+}
+
 } // namespace
 
 bool Configurator::load(const std::filesystem::path& resource_dir, const std::filesystem::path& user_dir)
@@ -231,6 +326,11 @@ bool Configurator::save(const std::filesystem::path& user_dir)
 {
     LogInfo << VAR(user_dir);
 
+    ConfigFileLock lock(user_dir);
+    if (!lock.valid()) {
+        return false;
+    }
+
     auto stored_config = config_;
     if (!transform_stored_passwords(data_.option, stored_config, SecretStore::encrypt)) {
         LogError << "Refusing to save configuration with an encryption failure";
@@ -242,13 +342,50 @@ bool Configurator::save(const std::filesystem::path& user_dir)
         std::filesystem::create_directories(config_path.parent_path());
     }
 
-    std::ofstream ofs(config_path);
-    if (!ofs.is_open()) {
-        LogError << "failed to open" << VAR(config_path);
+    return write_configuration(stored_config, config_path);
+}
+
+std::optional<bool> Configurator::update_welcome_snapshots(
+    const std::filesystem::path& user_dir,
+    std::vector<std::string> declared,
+    std::vector<std::string> resolved)
+{
+    const auto config_path = user_dir / kConfigPath;
+    if (!std::filesystem::exists(config_path)) {
+        LogError << "Cannot update welcome snapshots before a configuration exists" << VAR(config_path);
+        return std::nullopt;
+    }
+
+    ConfigFileLock lock(user_dir);
+    if (!lock.valid()) {
+        return std::nullopt;
+    }
+
+    auto persisted_config = Parser::parse_config(config_path);
+    if (!persisted_config) {
+        LogError << "Failed to reload configuration for welcome snapshots" << VAR(config_path);
+        return std::nullopt;
+    }
+
+    auto& config = configuration();
+    config.last_welcome = std::move(persisted_config->last_welcome);
+    config.last_resolved_welcome = std::move(persisted_config->last_resolved_welcome);
+    if (config.last_welcome == declared && config.last_resolved_welcome == resolved) {
         return false;
     }
 
-    ofs << stored_config.to_json();
+    config.last_welcome = std::move(declared);
+    config.last_resolved_welcome = std::move(resolved);
+
+    auto stored_config = config_;
+    if (!transform_stored_passwords(data_.option, stored_config, SecretStore::encrypt)) {
+        LogError << "Refusing to save welcome snapshots with an encryption failure";
+        return std::nullopt;
+    }
+
+    if (!write_configuration(stored_config, config_path)) {
+        return std::nullopt;
+    }
     return true;
 }
 

@@ -416,7 +416,7 @@ std::vector<std::string> Parser::welcome_items(const std::optional<InterfaceData
             using value_t = std::decay_t<decltype(value)>;
 
             if constexpr (std::is_same_v<value_t, std::string>) {
-                return { value };
+                return value.empty() ? std::vector<std::string> { } : std::vector<std::string> { value };
             }
             else {
                 return value;
