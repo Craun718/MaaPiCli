@@ -155,14 +155,16 @@ constexpr ULONG kNtFileSynchronousIoNonalert = 0x00000020;
 constexpr ULONG kNtFileOpen = 0x00000001;
 constexpr ULONG kNtFileCreate = 0x00000002;
 constexpr ULONG kNtFileOpenIf = 0x00000003;
-constexpr ULONG kNtFileRenameInformation = 10;
+constexpr ULONG kNtFileRenameInformationEx = 65;
+constexpr ULONG kFileRenameFlagReplaceIfExists = 0x00000001;
+constexpr ULONG kFileRenameFlagPosixSemantics = 0x00000002;
 constexpr NTSTATUS kNtObjectNameNotFound = static_cast<NTSTATUS>(0xC0000034u);
 constexpr NTSTATUS kNtObjectPathNotFound = static_cast<NTSTATUS>(0xC000003Au);
 constexpr NTSTATUS kNtPrivilegeNotHeld = static_cast<NTSTATUS>(0xC0000061u);
 
 struct FileRenameRequest
 {
-    BOOLEAN replace_if_exists = FALSE;
+    ULONG flags = 0;
     HANDLE root_directory = nullptr;
     DWORD file_name_length = 0;
     wchar_t file_name[1] = { };
@@ -1335,13 +1337,13 @@ public:
         const size_t byte_count = sizeof(FileRenameRequest) + target_name.size() * sizeof(wchar_t);
         std::vector<unsigned char> buffer(byte_count, 0);
         auto* information = reinterpret_cast<FileRenameRequest*>(buffer.data());
-        information->replace_if_exists = TRUE;
+        information->flags = kFileRenameFlagReplaceIfExists | kFileRenameFlagPosixSemantics;
         information->root_directory = target.directory().handle();
         information->file_name_length = static_cast<DWORD>(target_name.size() * sizeof(wchar_t));
         std::memcpy(information->file_name, target_name.data(), information->file_name_length);
         NtIoStatusBlock io_status { };
         const NTSTATUS status =
-            NtSetInformationFile(handle_, &io_status, information, static_cast<ULONG>(buffer.size()), kNtFileRenameInformation);
+            NtSetInformationFile(handle_, &io_status, information, static_cast<ULONG>(buffer.size()), kNtFileRenameInformationEx);
         if (!nt_success(status)) {
             LogError << "Failed to replace configuration" << VAR(temporary_name_) << VAR(target_name_) << VAR(status);
             return false;
