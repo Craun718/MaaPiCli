@@ -832,7 +832,7 @@ public:
         if (!nt_open_relative(
                 target.directory().handle(),
                 file_name_.wstring(),
-                GENERIC_READ | READ_CONTROL | ACCESS_SYSTEM_SECURITY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
                 kNtFileOpen,
                 kNtFileOpenReparsePoint | kNtFileNonDirectoryFile,
                 &handle_,
@@ -870,6 +870,9 @@ public:
         }
         security_information_ =
             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
+        if (sacl_ == nullptr) {
+            security_information_ &= ~SACL_SECURITY_INFORMATION;
+        }
         valid_ = true;
 #else
         descriptor_ = ::openat(target.directory().descriptor(), file_name_.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -1048,7 +1051,7 @@ public:
 #ifdef _WIN32
         NTSTATUS status = 0;
         ACCESS_MASK desired_access = DELETE | GENERIC_WRITE | WRITE_OWNER | WRITE_DAC | SYNCHRONIZE;
-        if (existing.exists()) {
+        if (existing.exists() && (existing.security_information() & SACL_SECURITY_INFORMATION) != 0) {
             desired_access |= ACCESS_SYSTEM_SECURITY;
         }
         if (!nt_open_relative(
