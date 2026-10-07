@@ -106,6 +106,14 @@ bool install_configuration_acl(const std::filesystem::path& path)
 }
 #elif defined(__linux__)
 constexpr char kPosixAclXattr[] = "system.posix_acl_access";
+constexpr uint16_t kAclUserObj = 0x01;
+constexpr uint16_t kAclUser = 0x02;
+constexpr uint16_t kAclGroupObj = 0x04;
+constexpr uint16_t kAclMask = 0x10;
+constexpr uint16_t kAclOther = 0x20;
+constexpr uint16_t kAclRead = 0x04;
+constexpr uint16_t kAclWrite = 0x02;
+constexpr uint32_t kAclUndefinedId = 0xffffffff;
 
 void append_le16(std::string& data, uint16_t value)
 {
@@ -143,14 +151,13 @@ std::optional<std::string> configuration_acl_data(const std::filesystem::path& p
 
 bool install_configuration_acl(const std::filesystem::path& path)
 {
-    const auto undefined_id = static_cast<uint32_t>(ACL_UNDEFINED_ID);
     std::string acl;
     append_le32(acl, POSIX_ACL_XATTR_VERSION);
-    append_acl_entry(acl, ACL_USER_OBJ, ACL_READ | ACL_WRITE, undefined_id);
-    append_acl_entry(acl, ACL_USER, ACL_READ, ::geteuid());
-    append_acl_entry(acl, ACL_GROUP_OBJ, 0, undefined_id);
-    append_acl_entry(acl, ACL_MASK, ACL_READ, undefined_id);
-    append_acl_entry(acl, ACL_OTHER, 0, undefined_id);
+    append_acl_entry(acl, kAclUserObj, kAclRead | kAclWrite, kAclUndefinedId);
+    append_acl_entry(acl, kAclUser, kAclRead, ::geteuid());
+    append_acl_entry(acl, kAclGroupObj, 0, kAclUndefinedId);
+    append_acl_entry(acl, kAclMask, kAclRead, kAclUndefinedId);
+    append_acl_entry(acl, kAclOther, 0, kAclUndefinedId);
 
     return ::setxattr(path.c_str(), kPosixAclXattr, acl.data(), acl.size(), 0) == 0;
 }
