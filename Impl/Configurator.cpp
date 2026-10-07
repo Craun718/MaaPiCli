@@ -522,7 +522,7 @@ public:
             return false;
         }
 #if defined(__APPLE__)
-        if (existing_acl_ != nullptr && ::acl_set_fd(descriptor_, existing_acl_) != 0) {
+        if (existing_acl_ != nullptr && ::acl_set_fd_np(descriptor_, existing_acl_, kConfigAclType) != 0) {
             LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
             return false;
         }
