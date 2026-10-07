@@ -7,8 +7,16 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <sstream>
 #include <string>
+
+#ifndef _WIN32
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/acl.h>
+#include <unistd.h>
+#endif
+#endif
 
 namespace
 {
@@ -56,6 +64,60 @@ private:
     std::stringstream input_stream_;
     std::stringstream output_stream_;
 };
+
+#if defined(__APPLE__) || defined(__linux__)
+constexpr auto kTestAclType =
+#if defined(__APPLE__)
+    ACL_TYPE_EXTENDED;
+#else
+    ACL_TYPE_ACCESS;
+#endif
+
+std::optional<std::string> configuration_acl_text(const std::filesystem::path& path)
+{
+    const auto acl = ::acl_get_file(path.c_str(), kTestAclType);
+    if (acl == nullptr) {
+        return std::nullopt;
+    }
+
+    char* text = ::acl_to_text(acl, nullptr);
+    const std::optional<std::string> result = text ? std::optional<std::string>(text) : std::nullopt;
+    ::acl_free(text);
+    ::acl_free(acl);
+    return result;
+}
+
+bool install_configuration_acl(const std::filesystem::path& path)
+{
+#if defined(__APPLE__)
+    acl_t acl = ::acl_init(1);
+    if (acl == nullptr) {
+        return false;
+    }
+
+    acl_entry_t entry = nullptr;
+    acl_permset_t permissions = nullptr;
+    uid_t uid = ::geteuid();
+    const bool installed = ::acl_create_entry(&acl, &entry) == 0 && ::acl_set_tag_type(entry, ACL_EXTENDED_ALLOW) == 0
+                           && ::acl_set_qualifier(entry, &uid) == 0 && ::acl_get_permset(entry, &permissions) == 0
+                           && ::acl_clear_perms(permissions) == 0 && ::acl_add_perm(permissions, ACL_READ_DATA) == 0
+                           && ::acl_valid(acl) == 0 && ::acl_set_file(path.c_str(), kTestAclType, acl) == 0;
+    ::acl_free(acl);
+    return installed;
+#else
+    const auto uid = std::to_string(::geteuid());
+    const auto text = "u::rw-,g::---,o::---,u:" + uid + ":r--,m::r--";
+    acl_t acl = ::acl_from_text(text);
+    if (acl == nullptr) {
+        return false;
+    }
+
+    const bool installed = ::acl_valid(acl) == 0 && ::acl_set_file(path.c_str(), kTestAclType, acl) == 0;
+    ::acl_free(acl);
+    return installed;
+#endif
+}
+#endif
 }
 
 int main()
@@ -500,6 +562,159 @@ int main()
 
         std::filesystem::remove_all(resource_dir);
         std::filesystem::remove_all(user_dir);
+    }
+
+#ifndef _WIN32
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(user_dir / "config");
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json({
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] },
+        { "name": "other-resource", "path": [ "resource" ] }
+    ]
+}
+)json";
+        }
+
+        const auto config_path = user_dir / "config/maa_pi_config.json";
+        {
+            std::ofstream config_stream(config_path);
+            config_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": []
+}
+)json";
+        }
+        std::filesystem::permissions(config_path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+
+        MAA_PROJECT_INTERFACE_NS::Configurator configurator;
+        require(configurator.load(resource_dir, user_dir), "the restricted configuration fixture should load");
+        configurator.configuration().resource = "other-resource";
+        require(configurator.save(user_dir), "the restricted configuration fixture should save");
+
+        const auto saved_permissions = std::filesystem::status(config_path).permissions();
+        require(
+            saved_permissions == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write),
+            "saving a configuration should preserve its existing permissions");
+        require(!std::filesystem::exists(config_path.string() + ".tmp"), "a permission-preserving save should clean its temporary file");
+
+#if defined(__APPLE__) || defined(__linux__)
+        require(install_configuration_acl(config_path), "the ACL configuration fixture should install an ACL");
+        const auto original_acl = configuration_acl_text(config_path);
+        require(original_acl.has_value(), "the ACL configuration fixture should read its ACL");
+
+        MAA_PROJECT_INTERFACE_NS::Configurator acl_configurator;
+        require(acl_configurator.load(resource_dir, user_dir), "the ACL configuration fixture should reload");
+        acl_configurator.configuration().resource = "default-resource";
+        require(acl_configurator.save(user_dir), "the ACL configuration fixture should save");
+
+        const auto saved_acl = configuration_acl_text(config_path);
+        require(
+            saved_acl.has_value() && original_acl.has_value() && *saved_acl == *original_acl,
+            "saving a configuration should preserve its existing ACL");
+        require(!std::filesystem::exists(config_path.string() + ".tmp"), "an ACL-preserving save should clean its temporary file");
+#endif
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(user_dir);
+    }
+
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(user_dir / "config");
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json({
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] },
+        { "name": "other-resource", "path": [ "resource" ] }
+    ]
+}
+)json";
+        }
+
+        const auto linked_config_path = user_dir / "config/maa_pi_config.json";
+        const auto target_config_path = user_dir / "linked-config.json";
+        {
+            std::ofstream target_stream(target_config_path);
+            target_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": []
+}
+)json";
+        }
+        std::filesystem::create_symlink(std::filesystem::path("..") / "linked-config.json", linked_config_path);
+
+        MAA_PROJECT_INTERFACE_NS::Configurator configurator;
+        require(configurator.load(resource_dir, user_dir), "the symlinked configuration fixture should load");
+        configurator.configuration().resource = "other-resource";
+        require(configurator.save(user_dir), "the symlinked configuration fixture should save");
+
+        require(
+            std::filesystem::is_symlink(std::filesystem::symlink_status(linked_config_path)),
+            "saving should preserve a configuration symlink");
+        const auto saved_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(linked_config_path);
+        require(saved_config && saved_config->resource == "other-resource", "a symlinked configuration target should be updated");
+        require(
+            !std::filesystem::exists(target_config_path.string() + ".tmp"),
+            "a symlinked configuration save should clean its temporary file");
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(user_dir);
+    }
+#endif
+
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json({
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [ { "name": "default-resource", "path": [ "resource" ] } ]
+}
+)json";
+        }
+
+        {
+            std::ofstream user_path_stream(user_dir);
+            user_path_stream << "not a directory";
+        }
+
+        MAA_PROJECT_INTERFACE_NS::Configurator configurator;
+        require(configurator.load(resource_dir, user_dir), "a first-time configuration should load despite an invalid user directory");
+        configurator.configuration().resource = "default-resource";
+
+        bool saved = true;
+        bool threw = false;
+        try {
+            saved = configurator.save(user_dir);
+        }
+        catch (const std::exception&) {
+            threw = true;
+        }
+        require(!saved && !threw, "an inaccessible user directory should fail configuration saving without throwing");
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove(user_dir);
     }
 
     if (failures != 0) {

@@ -1,17 +1,25 @@
 #include "ProjectInterface/Configurator.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <fstream>
 #include <ranges>
+#include <sstream>
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 
 #ifdef _WIN32
 #include "MaaUtils/SafeWindows.hpp"
+
+#include <aclapi.h>
 #else
 #include <fcntl.h>
 #include <sys/file.h>
+#if defined(__APPLE__) || defined(__linux__)
+#include <sys/acl.h>
+#endif
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -27,6 +35,32 @@ MAA_PROJECT_INTERFACE_NS_BEGIN
 
 namespace
 {
+#if defined(__APPLE__)
+constexpr auto kConfigAclType = ACL_TYPE_EXTENDED;
+#elif defined(__linux__)
+constexpr auto kConfigAclType = ACL_TYPE_ACCESS;
+#endif
+
+#if defined(__APPLE__) || defined(__linux__)
+bool missing_acl_error(int error)
+{
+    if (error == 0 || error == EOPNOTSUPP || error == ENOTSUP) {
+        return true;
+    }
+#ifdef ENOATTR
+    if (error == ENOATTR) {
+        return true;
+    }
+#endif
+#ifdef __APPLE__
+    // macOS reports an absent extended ACL as ENOENT even when the file exists.
+    return error == ENOENT;
+#else
+    return false;
+#endif
+}
+#endif
+
 MaaWin32ScreencapMethod parse_win32_screencap_method(const std::string& method)
 {
     static const std::unordered_map<std::string, MaaWin32ScreencapMethod> mapping = {
@@ -190,13 +224,35 @@ bool transform_stored_passwords(
     return true;
 }
 
+bool create_config_directory(const std::filesystem::path& directory)
+{
+    std::error_code error;
+    std::filesystem::create_directories(directory, error);
+    if (error) {
+        LogError << "Failed to create configuration directory" << VAR(directory) << VAR(error.message());
+        return false;
+    }
+    return true;
+}
+
+void remove_temporary_file(const std::filesystem::path& path)
+{
+    std::error_code error;
+    std::filesystem::remove(path, error);
+    if (error) {
+        LogError << "Failed to remove temporary configuration" << VAR(path) << VAR(error.message());
+    }
+}
+
 class ConfigFileLock
 {
 public:
     explicit ConfigFileLock(const std::filesystem::path& user_dir)
     {
         lock_path_ = user_dir / "config" / ".maa_pi_config.lock";
-        std::filesystem::create_directories(lock_path_.parent_path());
+        if (!create_config_directory(lock_path_.parent_path())) {
+            return;
+        }
 
 #ifdef _WIN32
         handle_ = CreateFileW(
@@ -270,44 +326,243 @@ private:
 #endif
 };
 
+class TemporaryConfigFile
+{
+public:
+    TemporaryConfigFile(const std::filesystem::path& target_path, const std::filesystem::path& temporary_path, bool preserve_existing)
+        : temporary_path_(temporary_path)
+    {
+        remove_temporary_file(temporary_path_);
+
+#ifdef _WIN32
+        SECURITY_ATTRIBUTES* security_attributes = nullptr;
+        SECURITY_ATTRIBUTES attributes { };
+        if (preserve_existing) {
+            PSID owner = nullptr;
+            PSID group = nullptr;
+            PACL dacl = nullptr;
+            PACL sacl = nullptr;
+            PSECURITY_DESCRIPTOR security_descriptor = nullptr;
+            const auto result = GetNamedSecurityInfoW(
+                target_path.c_str(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                &owner,
+                &group,
+                &dacl,
+                &sacl,
+                &security_descriptor);
+            if (result != ERROR_SUCCESS || security_descriptor == nullptr) {
+                LogError << "Failed to read configuration security information" << VAR(target_path) << VAR(result);
+                return;
+            }
+            OnScopeLeave([&]() { LocalFree(security_descriptor); });
+
+            attributes.nLength = sizeof(attributes);
+            attributes.lpSecurityDescriptor = security_descriptor;
+            security_attributes = &attributes;
+        }
+
+        handle_ = CreateFileW(temporary_path_.c_str(), GENERIC_WRITE, 0, security_attributes, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle_ == INVALID_HANDLE_VALUE) {
+            LogError << "Failed to create temporary configuration" << VAR(temporary_path_) << VAR(GetLastError());
+        }
+#else
+        struct stat target_status { };
+        if (::stat(target_path.c_str(), &target_status) == 0) {
+            target_mode_ = target_status.st_mode & 07777;
+        }
+        else if (errno != ENOENT) {
+            LogError << "Failed to inspect existing configuration" << VAR(target_path) << VAR(errno);
+            return;
+        }
+
+#if defined(__APPLE__) || defined(__linux__)
+        errno = 0;
+        existing_acl_ = ::acl_get_file(target_path.c_str(), kConfigAclType);
+        if (existing_acl_ == nullptr && !missing_acl_error(errno)) {
+            LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
+            return;
+        }
+#endif
+
+        descriptor_ = ::open(temporary_path_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+        if (descriptor_ < 0) {
+            LogError << "Failed to create temporary configuration" << VAR(temporary_path_) << VAR(errno);
+        }
+#endif
+    }
+
+    bool valid() const
+    {
+#ifdef _WIN32
+        return handle_ != INVALID_HANDLE_VALUE;
+#else
+        return descriptor_ >= 0;
+#endif
+    }
+
+    bool write(std::string_view content)
+    {
+        size_t offset = 0;
+        while (offset < content.size()) {
+#ifdef _WIN32
+            const auto chunk_size = static_cast<DWORD>(std::min<size_t>(content.size() - offset, 64 * 1024));
+            DWORD written = 0;
+            if (!WriteFile(handle_, content.data() + offset, chunk_size, &written, nullptr) || written == 0) {
+                LogError << "Failed to write temporary configuration" << VAR(temporary_path_) << VAR(GetLastError());
+                return false;
+            }
+#else
+            const ssize_t written = ::write(descriptor_, content.data() + offset, content.size() - offset);
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                LogError << "Failed to write temporary configuration" << VAR(temporary_path_) << VAR(errno);
+                return false;
+            }
+            if (written == 0) {
+                LogError << "Failed to write temporary configuration" << VAR(temporary_path_);
+                return false;
+            }
+#endif
+            offset += static_cast<size_t>(written);
+        }
+        return true;
+    }
+
+    bool finish()
+    {
+#ifdef _WIN32
+        if (!FlushFileBuffers(handle_)) {
+            LogError << "Failed to flush temporary configuration" << VAR(temporary_path_) << VAR(GetLastError());
+            return false;
+        }
+        if (!CloseHandle(handle_)) {
+            handle_ = INVALID_HANDLE_VALUE;
+            LogError << "Failed to close temporary configuration" << VAR(temporary_path_) << VAR(GetLastError());
+            return false;
+        }
+        handle_ = INVALID_HANDLE_VALUE;
+#else
+        if (::fchmod(descriptor_, target_mode_) != 0) {
+            LogError << "Failed to preserve configuration permissions" << VAR(temporary_path_) << VAR(errno);
+            return false;
+        }
+#if defined(__APPLE__) || defined(__linux__)
+        if (existing_acl_ != nullptr && ::acl_set_fd(descriptor_, existing_acl_) != 0) {
+            LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
+            return false;
+        }
+#endif
+        if (::fsync(descriptor_) != 0) {
+            LogError << "Failed to flush temporary configuration" << VAR(temporary_path_) << VAR(errno);
+            return false;
+        }
+        if (::close(descriptor_) != 0) {
+            descriptor_ = -1;
+            LogError << "Failed to close temporary configuration" << VAR(temporary_path_) << VAR(errno);
+            return false;
+        }
+        descriptor_ = -1;
+#endif
+        return true;
+    }
+
+    ~TemporaryConfigFile()
+    {
+#ifdef _WIN32
+        if (handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+        }
+#else
+        if (descriptor_ >= 0) {
+            ::close(descriptor_);
+            descriptor_ = -1;
+        }
+#if defined(__APPLE__) || defined(__linux__)
+        if (existing_acl_ != nullptr) {
+            ::acl_free(existing_acl_);
+            existing_acl_ = nullptr;
+        }
+#endif
+#endif
+        remove_temporary_file(temporary_path_);
+    }
+
+private:
+    std::filesystem::path temporary_path_;
+#ifdef _WIN32
+    HANDLE handle_ = INVALID_HANDLE_VALUE;
+#else
+    int descriptor_ = -1;
+    mode_t target_mode_ = 0600;
+#if defined(__APPLE__) || defined(__linux__)
+    acl_t existing_acl_ = nullptr;
+#endif
+#endif
+};
+
 bool write_configuration(const Configuration& config, const std::filesystem::path& config_path)
 {
-    auto temporary_path = config_path;
+    std::error_code error;
+    auto link_status = std::filesystem::symlink_status(config_path, error);
+    if (error) {
+        LogError << "Failed to inspect configuration path" << VAR(config_path) << VAR(error.message());
+        return false;
+    }
+
+    auto target_path = config_path;
+    if (std::filesystem::is_symlink(link_status)) {
+        target_path = std::filesystem::weakly_canonical(config_path, error);
+        if (error) {
+            LogError << "Failed to resolve configuration symlink" << VAR(config_path) << VAR(error.message());
+            return false;
+        }
+    }
+
+    const auto target_status = std::filesystem::status(target_path, error);
+    if (error) {
+        LogError << "Failed to inspect configuration target" << VAR(target_path) << VAR(error.message());
+        return false;
+    }
+    if (std::filesystem::exists(target_status) && !std::filesystem::is_regular_file(target_status)) {
+        LogError << "Configuration target is not a regular file" << VAR(target_path);
+        return false;
+    }
+
+    auto temporary_path = target_path;
     temporary_path += ".tmp";
 
-    std::ofstream ofs(temporary_path, std::ios::trunc | std::ios::binary);
-    if (!ofs.is_open()) {
-        LogError << "failed to open" << VAR(temporary_path);
+    std::ostringstream stream;
+    stream << config.to_json();
+    if (!stream.good()) {
+        LogError << "Failed to serialize configuration" << VAR(temporary_path);
         return false;
     }
+    const auto serialized = stream.str();
 
-    ofs << config.to_json();
-    ofs.flush();
-    if (!ofs.good()) {
-        LogError << "failed to write" << VAR(temporary_path);
-        std::filesystem::remove(temporary_path);
+    TemporaryConfigFile temporary_file(target_path, temporary_path, std::filesystem::exists(target_status));
+    if (!temporary_file.valid() || !temporary_file.write(serialized) || !temporary_file.finish()) {
         return false;
     }
-    ofs.close();
 
     if (!Parser::parse_config(temporary_path)) {
         LogError << "failed to validate" << VAR(temporary_path);
-        std::filesystem::remove(temporary_path);
         return false;
     }
 
 #ifdef _WIN32
-    if (!MoveFileExW(temporary_path.c_str(), config_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        LogError << "failed to replace" << VAR(temporary_path) << VAR(config_path) << VAR(GetLastError());
-        std::filesystem::remove(temporary_path);
+    if (!MoveFileExW(temporary_path.c_str(), target_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        LogError << "failed to replace" << VAR(temporary_path) << VAR(target_path) << VAR(GetLastError());
         return false;
     }
 #else
-    std::error_code error;
-    std::filesystem::rename(temporary_path, config_path, error);
+    std::filesystem::rename(temporary_path, target_path, error);
     if (error) {
-        LogError << "failed to replace" << VAR(temporary_path) << VAR(config_path) << VAR(error.message());
-        std::filesystem::remove(temporary_path);
+        LogError << "failed to replace" << VAR(temporary_path) << VAR(target_path) << VAR(error.message());
         return false;
     }
 #endif
@@ -401,7 +656,8 @@ bool Configurator::save(const std::filesystem::path& user_dir)
 
     const auto config_path = user_dir / kConfigPath;
     auto persisted_config = config_;
-    if (std::filesystem::exists(config_path)) {
+    std::error_code error;
+    if (std::filesystem::exists(config_path, error)) {
         auto latest_config = Parser::parse_config(config_path);
         if (!latest_config) {
             LogError << "Failed to reload configuration" << VAR(config_path);
@@ -413,6 +669,10 @@ bool Configurator::save(const std::filesystem::path& user_dir)
             return false;
         }
     }
+    else if (error) {
+        LogError << "Failed to inspect configuration" << VAR(config_path) << VAR(error.message());
+        return false;
+    }
 
     merge_local_changes(loaded_config_, config_, persisted_config);
 
@@ -420,10 +680,6 @@ bool Configurator::save(const std::filesystem::path& user_dir)
     if (!transform_stored_passwords(data_.option, stored_config, SecretStore::encrypt)) {
         LogError << "Refusing to save configuration with an encryption failure";
         return false;
-    }
-
-    if (config_path.has_parent_path()) {
-        std::filesystem::create_directories(config_path.parent_path());
     }
 
     if (!write_configuration(stored_config, config_path)) {
@@ -441,7 +697,13 @@ std::optional<bool> Configurator::update_welcome_snapshots(
     std::vector<std::string> resolved)
 {
     const auto config_path = user_dir / kConfigPath;
-    if (!std::filesystem::exists(config_path)) {
+    std::error_code error;
+    const auto config_exists = std::filesystem::exists(config_path, error);
+    if (error) {
+        LogError << "Failed to inspect configuration" << VAR(config_path) << VAR(error.message());
+        return std::nullopt;
+    }
+    if (!config_exists) {
         LogError << "Cannot update welcome snapshots before a configuration exists" << VAR(config_path);
         return std::nullopt;
     }
