@@ -117,6 +117,8 @@ bool read_configuration_acl(int descriptor, std::string& acl)
 #endif
 
 #ifdef _WIN32
+using NTSTATUS = LONG;
+
 struct NtUnicodeString
 {
     USHORT length = 0;
