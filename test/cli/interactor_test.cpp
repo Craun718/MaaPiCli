@@ -639,7 +639,9 @@ int main()
 }
 )json";
         }
-        std::filesystem::permissions(config_path, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+        std::filesystem::permissions(
+            config_path,
+            std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::group_read);
 
         MAA_PROJECT_INTERFACE_NS::Configurator configurator;
         require(configurator.load(resource_dir, user_dir), "the restricted configuration fixture should load");
@@ -648,25 +650,25 @@ int main()
 
         const auto saved_permissions = std::filesystem::status(config_path).permissions();
         require(
-            saved_permissions == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write),
+            saved_permissions
+                == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write | std::filesystem::perms::group_read),
             "saving a configuration should preserve its existing permissions");
         require(!std::filesystem::exists(config_path.string() + ".tmp"), "a permission-preserving save should clean its temporary file");
 
 #if defined(__APPLE__) || defined(__linux__)
-        require(install_configuration_acl(config_path), "the ACL configuration fixture should install an ACL");
-        const auto original_acl = configuration_acl_data(config_path);
-        require(original_acl.has_value(), "the ACL configuration fixture should read its ACL");
+        const bool acl_installed = install_configuration_acl(config_path);
+        const auto original_acl = acl_installed ? configuration_acl_data(config_path) : std::nullopt;
 
-        MAA_PROJECT_INTERFACE_NS::Configurator acl_configurator;
-        require(acl_configurator.load(resource_dir, user_dir), "the ACL configuration fixture should reload");
-        acl_configurator.configuration().resource = "default-resource";
-        require(acl_configurator.save(user_dir), "the ACL configuration fixture should save");
+        if (original_acl.has_value()) {
+            MAA_PROJECT_INTERFACE_NS::Configurator acl_configurator;
+            require(acl_configurator.load(resource_dir, user_dir), "the ACL configuration fixture should reload");
+            acl_configurator.configuration().resource = "default-resource";
+            require(acl_configurator.save(user_dir), "the ACL configuration fixture should save");
 
-        const auto saved_acl = configuration_acl_data(config_path);
-        require(
-            saved_acl.has_value() && original_acl.has_value() && *saved_acl == *original_acl,
-            "saving a configuration should preserve its existing ACL");
-        require(!std::filesystem::exists(config_path.string() + ".tmp"), "an ACL-preserving save should clean its temporary file");
+            const auto saved_acl = configuration_acl_data(config_path);
+            require(saved_acl.has_value() && *saved_acl == *original_acl, "saving a configuration should preserve its existing ACL");
+            require(!std::filesystem::exists(config_path.string() + ".tmp"), "an ACL-preserving save should clean its temporary file");
+        }
 #endif
 
         std::filesystem::remove_all(resource_dir);

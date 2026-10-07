@@ -69,6 +69,11 @@ bool missing_xattr_error(int error)
     if (error == ENOTSUP || error == EOPNOTSUPP) {
         return true;
     }
+#if defined(ENOENT)
+    if (error == ENOENT) {
+        return true;
+    }
+#endif
 #if defined(ENODATA)
     if (error == ENODATA) {
         return true;
@@ -415,7 +420,11 @@ public:
 #else
         struct stat target_status { };
         if (::stat(target_path.c_str(), &target_status) == 0) {
-            target_mode_ = target_status.st_mode & 07777;
+            if (preserve_existing) {
+                target_mode_ = target_status.st_mode & 07777;
+                target_owner_ = target_status.st_uid;
+                target_group_ = target_status.st_gid;
+            }
         }
         else if (errno != ENOENT) {
             LogError << "Failed to inspect existing configuration" << VAR(target_path) << VAR(errno);
@@ -423,22 +432,34 @@ public:
         }
 
 #if defined(__APPLE__)
-        errno = 0;
-        existing_acl_ = ::acl_get_file(target_path.c_str(), kConfigAclType);
-        if (existing_acl_ == nullptr && !missing_acl_error(errno)) {
-            LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
-            return;
+        if (preserve_existing) {
+            errno = 0;
+            existing_acl_ = ::acl_get_file(target_path.c_str(), kConfigAclType);
+            if (existing_acl_ == nullptr && !missing_acl_error(errno)) {
+                LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
+                return;
+            }
         }
 #elif defined(__linux__)
-        if (!read_configuration_acl(target_path, existing_acl_)) {
-            LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
-            return;
+        if (preserve_existing) {
+            if (!read_configuration_acl(target_path, existing_acl_)) {
+                LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
+                return;
+            }
         }
 #endif
 
         descriptor_ = ::open(temporary_path_.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
         if (descriptor_ < 0) {
             LogError << "Failed to create temporary configuration" << VAR(temporary_path_) << VAR(errno);
+            return;
+        }
+
+        const bool ownership_differs = target_owner_ != ::geteuid() || target_group_ != ::getegid();
+        if (preserve_existing && ownership_differs && ::fchown(descriptor_, target_owner_, target_group_) != 0) {
+            LogError << "Failed to preserve configuration ownership" << VAR(temporary_path_) << VAR(errno);
+            ::close(descriptor_);
+            descriptor_ = -1;
         }
 #endif
     }
@@ -554,6 +575,8 @@ private:
 #else
     int descriptor_ = -1;
     mode_t target_mode_ = 0600;
+    uid_t target_owner_ = 0;
+    gid_t target_group_ = 0;
 #if defined(__APPLE__)
     acl_t existing_acl_ = nullptr;
 #elif defined(__linux__)
