@@ -836,7 +836,7 @@ public:
                 file_name_.wstring(),
                 base_access | ACCESS_SYSTEM_SECURITY,
                 kNtFileOpen,
-                kNtFileOpenReparsePoint | kNtFileNonDirectoryFile,
+                kNtFileOpenReparsePoint | kNtFileNonDirectoryFile | kNtFileSynchronousIoNonalert,
                 &handle_,
                 &status)) {
             if (status == kNtObjectNameNotFound || status == kNtObjectPathNotFound) {
@@ -851,7 +851,7 @@ public:
                         file_name_.wstring(),
                         base_access,
                         kNtFileOpen,
-                        kNtFileOpenReparsePoint | kNtFileNonDirectoryFile,
+                        kNtFileOpenReparsePoint | kNtFileNonDirectoryFile | kNtFileSynchronousIoNonalert,
                         &handle_,
                         &status)) {
                     if (status == kNtObjectNameNotFound || status == kNtObjectPathNotFound) {
