@@ -451,6 +451,44 @@ std::optional<std::filesystem::path> opened_final_path(HANDLE handle)
     return std::filesystem::path(result).lexically_normal();
 }
 
+bool windows_paths_equal(const std::filesystem::path& left, const std::filesystem::path& right)
+{
+    auto left_native = left.lexically_normal().wstring();
+    auto right_native = right.lexically_normal().wstring();
+    std::ranges::replace(left_native, L'/', L'\\');
+    std::ranges::replace(right_native, L'/', L'\\');
+    return CompareStringOrdinal(left_native.c_str(), -1, right_native.c_str(), -1, TRUE) == CSTR_EQUAL;
+}
+
+bool file_information_matches(const BY_HANDLE_FILE_INFORMATION& left, const BY_HANDLE_FILE_INFORMATION& right)
+{
+    return left.dwVolumeSerialNumber == right.dwVolumeSerialNumber && left.nFileIndexHigh == right.nFileIndexHigh
+           && left.nFileIndexLow == right.nFileIndexLow;
+}
+
+bool handle_refers_to_path(HANDLE handle, const std::filesystem::path& expected)
+{
+    BY_HANDLE_FILE_INFORMATION expected_information { };
+    HANDLE expected_handle = CreateFileW(
+        expected.c_str(),
+        FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+        nullptr);
+    if (expected_handle == INVALID_HANDLE_VALUE || !GetFileInformationByHandle(expected_handle, &expected_information)) {
+        if (expected_handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(expected_handle);
+        }
+        return false;
+    }
+    CloseHandle(expected_handle);
+
+    BY_HANDLE_FILE_INFORMATION information { };
+    return GetFileInformationByHandle(handle, &information) && file_information_matches(information, expected_information);
+}
+
 bool handle_has_final_path(HANDLE handle, const std::filesystem::path& expected)
 {
     BY_HANDLE_FILE_INFORMATION information { };
@@ -458,7 +496,7 @@ bool handle_has_final_path(HANDLE handle, const std::filesystem::path& expected)
         return false;
     }
     const auto final_path = opened_final_path(handle);
-    return final_path.has_value() && *final_path == expected.lexically_normal();
+    return final_path.has_value() && windows_paths_equal(*final_path, expected);
 }
 #endif
 
@@ -483,12 +521,6 @@ public:
             LogError << "Failed to resolve configuration directory" << VAR(directory) << VAR(error.message());
             return std::nullopt;
         }
-        const auto expected_path = windows_full_path(canonical_directory);
-        if (!expected_path) {
-            LogError << "Failed to resolve configuration directory" << VAR(canonical_directory) << VAR(GetLastError());
-            return std::nullopt;
-        }
-
         HANDLE handle = CreateFileW(
             canonical_directory.c_str(),
             FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
@@ -501,12 +533,21 @@ public:
             LogError << "Failed to open configuration directory" << VAR(canonical_directory) << VAR(GetLastError());
             return std::nullopt;
         }
-        if (!handle_has_final_path(handle, *expected_path)) {
+
+        if (!handle_refers_to_path(handle, canonical_directory)) {
             LogError << "Configuration directory changed while opening" << VAR(canonical_directory);
             CloseHandle(handle);
             return std::nullopt;
         }
-        return TrustedConfigurationDirectory(handle, canonical_directory);
+
+        BY_HANDLE_FILE_INFORMATION information { };
+        const auto final_path = GetFileInformationByHandle(handle, &information) ? opened_final_path(handle) : std::nullopt;
+        if (!final_path || (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            LogError << "Failed to resolve opened configuration directory" << VAR(canonical_directory) << VAR(GetLastError());
+            CloseHandle(handle);
+            return std::nullopt;
+        }
+        return TrustedConfigurationDirectory(handle, *final_path);
 #else
         std::error_code error;
         auto canonical_directory = std::filesystem::weakly_canonical(directory, error);
@@ -711,24 +752,48 @@ std::optional<TrustedConfigurationTarget> resolve_configuration_target(const std
         return std::nullopt;
     }
 
+#ifdef _WIN32
+    const auto target_path = windows_full_path(config_path);
+    if (!target_path) {
+        LogError << "Failed to resolve configuration target" << VAR(config_path) << VAR(GetLastError());
+        return std::nullopt;
+    }
+    const auto requested_directory = target_path->parent_path();
+    if (!path_is_within_directory(*target_path, requested_directory)) {
+        LogError << "Configuration target is outside its configuration directory" << VAR(config_path) << VAR(*target_path);
+        return std::nullopt;
+    }
+    const auto relative_directory = target_path->parent_path().lexically_relative(requested_directory);
+#else
     std::error_code error;
     const auto target_path = std::filesystem::weakly_canonical(config_path, error);
     if (error) {
         LogError << "Failed to resolve configuration target" << VAR(config_path) << VAR(error.message());
         return std::nullopt;
     }
+#endif
+#ifndef _WIN32
     if (!path_is_within_directory(target_path, directory->path())) {
         LogError << "Configuration target is outside its configuration directory" << VAR(config_path) << VAR(target_path);
         return std::nullopt;
     }
+#endif
 
+#ifdef _WIN32
+    auto target_directory = TrustedConfigurationDirectory::descend(*directory, relative_directory);
+#else
     auto target_directory =
         TrustedConfigurationDirectory::descend(*directory, target_path.parent_path().lexically_relative(directory->path()));
+#endif
     if (!target_directory) {
         return std::nullopt;
     }
 
+#ifdef _WIN32
+    return TrustedConfigurationTarget(std::move(*target_directory), target_path->filename());
+#else
     return TrustedConfigurationTarget(std::move(*target_directory), target_path.filename());
+#endif
 }
 
 class ConfigFileLock
