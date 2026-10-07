@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <fstream>
 #include <ranges>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -198,7 +199,14 @@ public:
         std::filesystem::create_directories(lock_path_.parent_path());
 
 #ifdef _WIN32
-        handle_ = CreateFileW(lock_path_.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        handle_ = CreateFileW(
+            lock_path_.c_str(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr,
+            OPEN_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL,
+            nullptr);
         if (handle_ == INVALID_HANDLE_VALUE) {
             LogError << "Failed to open configuration lock" << VAR(lock_path_) << VAR(GetLastError());
             return;
@@ -264,14 +272,73 @@ private:
 
 bool write_configuration(const Configuration& config, const std::filesystem::path& config_path)
 {
-    std::ofstream ofs(config_path, std::ios::trunc);
+    auto temporary_path = config_path;
+    temporary_path += ".tmp";
+
+    std::ofstream ofs(temporary_path, std::ios::trunc | std::ios::binary);
     if (!ofs.is_open()) {
-        LogError << "failed to open" << VAR(config_path);
+        LogError << "failed to open" << VAR(temporary_path);
         return false;
     }
 
     ofs << config.to_json();
-    return ofs.good();
+    ofs.flush();
+    if (!ofs.good()) {
+        LogError << "failed to write" << VAR(temporary_path);
+        std::filesystem::remove(temporary_path);
+        return false;
+    }
+    ofs.close();
+
+    if (!Parser::parse_config(temporary_path)) {
+        LogError << "failed to validate" << VAR(temporary_path);
+        std::filesystem::remove(temporary_path);
+        return false;
+    }
+
+#ifdef _WIN32
+    if (!MoveFileExW(temporary_path.c_str(), config_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        LogError << "failed to replace" << VAR(temporary_path) << VAR(config_path) << VAR(GetLastError());
+        std::filesystem::remove(temporary_path);
+        return false;
+    }
+#else
+    std::error_code error;
+    std::filesystem::rename(temporary_path, config_path, error);
+    if (error) {
+        LogError << "failed to replace" << VAR(temporary_path) << VAR(config_path) << VAR(error.message());
+        std::filesystem::remove(temporary_path);
+        return false;
+    }
+#endif
+
+    return true;
+}
+
+void merge_local_changes(const Configuration& baseline, const Configuration& local, Configuration& persisted)
+{
+    auto merge_field = [&]<typename Field>(Field Configuration::* field) {
+        if (local.*field != baseline.*field) {
+            persisted.*field = local.*field;
+        }
+    };
+
+    merge_field(&Configuration::controller);
+    merge_field(&Configuration::adb);
+    merge_field(&Configuration::win32);
+    merge_field(&Configuration::macos);
+    merge_field(&Configuration::playcover);
+    merge_field(&Configuration::gamepad);
+    merge_field(&Configuration::lnx);
+    merge_field(&Configuration::resource);
+    merge_field(&Configuration::task);
+    merge_field(&Configuration::global_option);
+    merge_field(&Configuration::resource_option);
+    merge_field(&Configuration::controller_option);
+    merge_field(&Configuration::pretask);
+
+    // Welcome snapshots have their own locked update path and are not ordinary
+    // configuration edits.
 }
 
 } // namespace
@@ -304,6 +371,7 @@ bool Configurator::load(const std::filesystem::path& resource_dir, const std::fi
     }
 
     resource_dir_ = resource_dir;
+    loaded_config_ = config_;
 
     // 加载翻译文件
     load_translations();
@@ -331,18 +399,40 @@ bool Configurator::save(const std::filesystem::path& user_dir)
         return false;
     }
 
-    auto stored_config = config_;
+    const auto config_path = user_dir / kConfigPath;
+    auto persisted_config = config_;
+    if (std::filesystem::exists(config_path)) {
+        auto latest_config = Parser::parse_config(config_path);
+        if (!latest_config) {
+            LogError << "Failed to reload configuration" << VAR(config_path);
+            return false;
+        }
+        persisted_config = *std::move(latest_config);
+        if (!transform_stored_passwords(data_.option, persisted_config, SecretStore::decrypt)) {
+            LogError << "Failed to decrypt persisted password inputs";
+            return false;
+        }
+    }
+
+    merge_local_changes(loaded_config_, config_, persisted_config);
+
+    auto stored_config = persisted_config;
     if (!transform_stored_passwords(data_.option, stored_config, SecretStore::encrypt)) {
         LogError << "Refusing to save configuration with an encryption failure";
         return false;
     }
 
-    const auto config_path = user_dir / kConfigPath;
     if (config_path.has_parent_path()) {
         std::filesystem::create_directories(config_path.parent_path());
     }
 
-    return write_configuration(stored_config, config_path);
+    if (!write_configuration(stored_config, config_path)) {
+        return false;
+    }
+
+    config_ = std::move(persisted_config);
+    loaded_config_ = config_;
+    return true;
 }
 
 std::optional<bool> Configurator::update_welcome_snapshots(
@@ -367,17 +457,25 @@ std::optional<bool> Configurator::update_welcome_snapshots(
         return std::nullopt;
     }
 
-    auto& config = configuration();
-    config.last_welcome = std::move(persisted_config->last_welcome);
-    config.last_resolved_welcome = std::move(persisted_config->last_resolved_welcome);
-    if (config.last_welcome == declared && config.last_resolved_welcome == resolved) {
+    auto latest_config = *std::move(persisted_config);
+    if (!transform_stored_passwords(data_.option, latest_config, SecretStore::decrypt)) {
+        LogError << "Failed to decrypt persisted password inputs for welcome snapshots";
+        return std::nullopt;
+    }
+
+    if (latest_config.last_welcome == declared && latest_config.last_resolved_welcome == resolved) {
+        auto& config = configuration();
+        config.last_welcome = latest_config.last_welcome;
+        config.last_resolved_welcome = latest_config.last_resolved_welcome;
+        loaded_config_.last_welcome = config.last_welcome;
+        loaded_config_.last_resolved_welcome = config.last_resolved_welcome;
         return false;
     }
 
-    config.last_welcome = std::move(declared);
-    config.last_resolved_welcome = std::move(resolved);
+    latest_config.last_welcome = std::move(declared);
+    latest_config.last_resolved_welcome = std::move(resolved);
 
-    auto stored_config = config_;
+    auto stored_config = latest_config;
     if (!transform_stored_passwords(data_.option, stored_config, SecretStore::encrypt)) {
         LogError << "Refusing to save welcome snapshots with an encryption failure";
         return std::nullopt;
@@ -386,6 +484,12 @@ std::optional<bool> Configurator::update_welcome_snapshots(
     if (!write_configuration(stored_config, config_path)) {
         return std::nullopt;
     }
+
+    auto& config = configuration();
+    config.last_welcome = latest_config.last_welcome;
+    config.last_resolved_welcome = latest_config.last_resolved_welcome;
+    loaded_config_.last_welcome = config.last_welcome;
+    loaded_config_.last_resolved_welcome = config.last_resolved_welcome;
     return true;
 }
 

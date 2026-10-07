@@ -61,6 +61,7 @@ private:
     InterfaceData data_;
     bool first_time_use_ = false;
     Configuration config_;
+    Configuration loaded_config_;                               // Decrypted state used to identify local edits.
     std::unordered_map<std::string, std::string> translations_; // 翻译表
 };
 
