@@ -155,6 +155,7 @@ constexpr ULONG kNtFileSynchronousIoNonalert = 0x00000020;
 constexpr ULONG kNtFileOpen = 0x00000001;
 constexpr ULONG kNtFileCreate = 0x00000002;
 constexpr ULONG kNtFileOpenIf = 0x00000003;
+constexpr ULONG kNtFileRenameInformation = 10;
 constexpr NTSTATUS kNtObjectNameNotFound = static_cast<NTSTATUS>(0xC0000034u);
 constexpr NTSTATUS kNtObjectPathNotFound = static_cast<NTSTATUS>(0xC000003Au);
 constexpr NTSTATUS kNtPrivilegeNotHeld = static_cast<NTSTATUS>(0xC0000061u);
@@ -181,6 +182,13 @@ extern "C" NTSTATUS WINAPI NtCreateFile(
     ULONG ea_length);
 
 extern "C" NTSTATUS WINAPI NtDeleteFile(NtObjectAttributes* object_attributes);
+
+extern "C" NTSTATUS WINAPI NtSetInformationFile(
+    HANDLE file_handle,
+    NtIoStatusBlock* io_status_block,
+    PVOID file_information,
+    ULONG length,
+    ULONG file_information_class);
 
 NtUnicodeString nt_name(const std::wstring& name)
 {
@@ -1331,8 +1339,11 @@ public:
         information->root_directory = target.directory().handle();
         information->file_name_length = static_cast<DWORD>(target_name.size() * sizeof(wchar_t));
         std::memcpy(information->file_name, target_name.data(), information->file_name_length);
-        if (!SetFileInformationByHandle(handle_, FileRenameInfo, information, static_cast<DWORD>(buffer.size()))) {
-            LogError << "Failed to replace configuration" << VAR(temporary_name_) << VAR(target_name_) << VAR(GetLastError());
+        NtIoStatusBlock io_status { };
+        const NTSTATUS status =
+            NtSetInformationFile(handle_, &io_status, information, static_cast<ULONG>(buffer.size()), kNtFileRenameInformation);
+        if (!nt_success(status)) {
+            LogError << "Failed to replace configuration" << VAR(temporary_name_) << VAR(target_name_) << VAR(status);
             return false;
         }
 #else
