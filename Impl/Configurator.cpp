@@ -16,8 +16,10 @@
 #else
 #include <fcntl.h>
 #include <sys/file.h>
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
 #include <sys/acl.h>
+#elif defined(__linux__)
+#include <sys/xattr.h>
 #endif
 #include <sys/stat.h>
 #include <unistd.h>
@@ -37,14 +39,12 @@ namespace
 {
 #if defined(__APPLE__)
 constexpr auto kConfigAclType = ACL_TYPE_EXTENDED;
-#elif defined(__linux__)
-constexpr auto kConfigAclType = ACL_TYPE_ACCESS;
 #endif
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
 bool missing_acl_error(int error)
 {
-    if (error == 0 || error == EOPNOTSUPP || error == ENOTSUP) {
+    if (error == EOPNOTSUPP || error == ENOTSUP) {
         return true;
     }
 #ifdef ENOATTR
@@ -58,6 +58,51 @@ bool missing_acl_error(int error)
 #else
     return false;
 #endif
+}
+#endif
+
+#if defined(__linux__)
+constexpr char kPosixAclXattr[] = "system.posix_acl_access";
+
+bool missing_xattr_error(int error)
+{
+    if (error == ENOTSUP || error == EOPNOTSUPP) {
+        return true;
+    }
+#if defined(ENODATA)
+    if (error == ENODATA) {
+        return true;
+    }
+#endif
+#if defined(ENOATTR) && ENOATTR != ENODATA
+    if (error == ENOATTR) {
+        return true;
+    }
+#endif
+    return false;
+}
+
+bool read_configuration_acl(const std::filesystem::path& path, std::string& acl)
+{
+    const auto size = ::getxattr(path.c_str(), kPosixAclXattr, nullptr, 0);
+    if (size < 0) {
+        return missing_xattr_error(errno);
+    }
+    if (size == 0) {
+        errno = EINVAL;
+        return false;
+    }
+
+    acl.resize(static_cast<size_t>(size), '\0');
+    const auto actual_size = ::getxattr(path.c_str(), kPosixAclXattr, acl.data(), acl.size());
+    if (actual_size < 0) {
+        return false;
+    }
+    if (actual_size != static_cast<ssize_t>(acl.size())) {
+        errno = ERANGE;
+        return false;
+    }
+    return true;
 }
 #endif
 
@@ -377,10 +422,15 @@ public:
             return;
         }
 
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
         errno = 0;
         existing_acl_ = ::acl_get_file(target_path.c_str(), kConfigAclType);
         if (existing_acl_ == nullptr && !missing_acl_error(errno)) {
+            LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
+            return;
+        }
+#elif defined(__linux__)
+        if (!read_configuration_acl(target_path, existing_acl_)) {
             LogError << "Failed to read configuration ACL" << VAR(target_path) << VAR(errno);
             return;
         }
@@ -450,8 +500,13 @@ public:
             LogError << "Failed to preserve configuration permissions" << VAR(temporary_path_) << VAR(errno);
             return false;
         }
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
         if (existing_acl_ != nullptr && ::acl_set_fd(descriptor_, existing_acl_) != 0) {
+            LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
+            return false;
+        }
+#elif defined(__linux__)
+        if (!existing_acl_.empty() && ::fsetxattr(descriptor_, kPosixAclXattr, existing_acl_.data(), existing_acl_.size(), 0) != 0) {
             LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
             return false;
         }
@@ -482,7 +537,7 @@ public:
             ::close(descriptor_);
             descriptor_ = -1;
         }
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
         if (existing_acl_ != nullptr) {
             ::acl_free(existing_acl_);
             existing_acl_ = nullptr;
@@ -499,8 +554,10 @@ private:
 #else
     int descriptor_ = -1;
     mode_t target_mode_ = 0600;
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
     acl_t existing_acl_ = nullptr;
+#elif defined(__linux__)
+    std::string existing_acl_;
 #endif
 #endif
 };

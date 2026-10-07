@@ -4,6 +4,7 @@
 #include "ProjectInterface/Parser.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -12,10 +13,14 @@
 #include <string>
 
 #ifndef _WIN32
-#if defined(__APPLE__) || defined(__linux__)
+#if defined(__APPLE__)
 #include <sys/acl.h>
-#include <unistd.h>
+#elif defined(__linux__)
+#include <endian.h>
+#include <linux/posix_acl_xattr.h>
+#include <sys/xattr.h>
 #endif
+#include <unistd.h>
 #endif
 
 namespace
@@ -65,15 +70,10 @@ private:
     std::stringstream output_stream_;
 };
 
-#if defined(__APPLE__) || defined(__linux__)
-constexpr auto kTestAclType =
 #if defined(__APPLE__)
-    ACL_TYPE_EXTENDED;
-#else
-    ACL_TYPE_ACCESS;
-#endif
+constexpr auto kTestAclType = ACL_TYPE_EXTENDED;
 
-std::optional<std::string> configuration_acl_text(const std::filesystem::path& path)
+std::optional<std::string> configuration_acl_data(const std::filesystem::path& path)
 {
     const auto acl = ::acl_get_file(path.c_str(), kTestAclType);
     if (acl == nullptr) {
@@ -89,7 +89,6 @@ std::optional<std::string> configuration_acl_text(const std::filesystem::path& p
 
 bool install_configuration_acl(const std::filesystem::path& path)
 {
-#if defined(__APPLE__)
     acl_t acl = ::acl_init(1);
     if (acl == nullptr) {
         return false;
@@ -104,20 +103,59 @@ bool install_configuration_acl(const std::filesystem::path& path)
                            && ::acl_valid(acl) == 0 && ::acl_set_file(path.c_str(), kTestAclType, acl) == 0;
     ::acl_free(acl);
     return installed;
-#else
-    const auto uid = std::to_string(::geteuid());
-    const auto text = "u::rw-,g::---,o::---,u:" + uid + ":r--,m::r--";
-    acl_t acl = ::acl_from_text(text);
-    if (acl == nullptr) {
-        return false;
+}
+#elif defined(__linux__)
+constexpr char kPosixAclXattr[] = "system.posix_acl_access";
+
+void append_le16(std::string& data, uint16_t value)
+{
+    const auto encoded = htole16(value);
+    data.append(reinterpret_cast<const char*>(&encoded), sizeof(encoded));
+}
+
+void append_le32(std::string& data, uint32_t value)
+{
+    const auto encoded = htole32(value);
+    data.append(reinterpret_cast<const char*>(&encoded), sizeof(encoded));
+}
+
+void append_acl_entry(std::string& data, uint16_t tag, uint16_t permissions, uint32_t qualifier)
+{
+    append_le16(data, tag);
+    append_le16(data, permissions);
+    append_le32(data, qualifier);
+}
+
+std::optional<std::string> configuration_acl_data(const std::filesystem::path& path)
+{
+    const auto size = ::getxattr(path.c_str(), kPosixAclXattr, nullptr, 0);
+    if (size < 0) {
+        return std::nullopt;
     }
 
-    const bool installed = ::acl_valid(acl) == 0 && ::acl_set_file(path.c_str(), kTestAclType, acl) == 0;
-    ::acl_free(acl);
-    return installed;
-#endif
+    std::string data(static_cast<size_t>(size), '\0');
+    const auto actual_size = ::getxattr(path.c_str(), kPosixAclXattr, data.data(), data.size());
+    if (actual_size < 0 || actual_size != static_cast<ssize_t>(data.size())) {
+        return std::nullopt;
+    }
+    return data;
+}
+
+bool install_configuration_acl(const std::filesystem::path& path)
+{
+    const auto undefined_id = static_cast<uint32_t>(ACL_UNDEFINED_ID);
+    std::string acl;
+    append_le32(acl, POSIX_ACL_XATTR_VERSION);
+    append_acl_entry(acl, ACL_USER_OBJ, ACL_READ | ACL_WRITE, undefined_id);
+    append_acl_entry(acl, ACL_USER, ACL_READ, ::geteuid());
+    append_acl_entry(acl, ACL_GROUP_OBJ, 0, undefined_id);
+    append_acl_entry(acl, ACL_MASK, ACL_READ, undefined_id);
+    append_acl_entry(acl, ACL_OTHER, 0, undefined_id);
+
+    return ::setxattr(path.c_str(), kPosixAclXattr, acl.data(), acl.size(), 0) == 0;
 }
 #endif
+
 }
 
 int main()
@@ -609,7 +647,7 @@ int main()
 
 #if defined(__APPLE__) || defined(__linux__)
         require(install_configuration_acl(config_path), "the ACL configuration fixture should install an ACL");
-        const auto original_acl = configuration_acl_text(config_path);
+        const auto original_acl = configuration_acl_data(config_path);
         require(original_acl.has_value(), "the ACL configuration fixture should read its ACL");
 
         MAA_PROJECT_INTERFACE_NS::Configurator acl_configurator;
@@ -617,7 +655,7 @@ int main()
         acl_configurator.configuration().resource = "default-resource";
         require(acl_configurator.save(user_dir), "the ACL configuration fixture should save");
 
-        const auto saved_acl = configuration_acl_text(config_path);
+        const auto saved_acl = configuration_acl_data(config_path);
         require(
             saved_acl.has_value() && original_acl.has_value() && *saved_acl == *original_acl,
             "saving a configuration should preserve its existing ACL");

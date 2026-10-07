@@ -45,8 +45,7 @@ target_link_libraries(
 
 if(LINUX)
     find_package(Threads REQUIRED)
-    find_library(MAAPICLI_ACL_LIBRARY NAMES acl libacl.so.1 REQUIRED)
-    target_link_libraries(MaaPiCliCore PUBLIC Threads::Threads ${CMAKE_DL_LIBS} PRIVATE "${MAAPICLI_ACL_LIBRARY}")
+    target_link_libraries(MaaPiCliCore PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 endif()
 
 if(WIN32)
