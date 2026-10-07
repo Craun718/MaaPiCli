@@ -364,6 +364,25 @@ int main()
         zero_max_json && Parser::parse_interface(*zero_max_json).has_value(),
         "max_count zero should accept an empty checkbox selection");
 
+    auto interception_keyboard_json = json::parse(
+        R"json({
+            "interface_version": 2,
+            "controller": [{
+                "name": "win32-controller",
+                "type": "Win32",
+                "win32": {
+                    "keyboard": "Interception"
+                }
+            }],
+            "resource": [{ "name": "default-resource", "path": ["resource"] }]
+        })json");
+    require(interception_keyboard_json.has_value(), "Interception keyboard fixture should parse as JSON");
+    auto interception_keyboard = interception_keyboard_json ? Parser::parse_interface(*interception_keyboard_json) : std::nullopt;
+    require(interception_keyboard.has_value(), "the v5.14.0 Win32 keyboard method should parse");
+    require(
+        interception_keyboard && interception_keyboard->controller.front().win32.keyboard == "Interception",
+        "the Interception keyboard method should be preserved");
+
     {
         auto single_welcome_json = json::parse(
             R"json({
