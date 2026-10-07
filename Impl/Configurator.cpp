@@ -451,15 +451,6 @@ std::optional<std::filesystem::path> opened_final_path(HANDLE handle)
     return std::filesystem::path(result).lexically_normal();
 }
 
-bool windows_paths_equal(const std::filesystem::path& left, const std::filesystem::path& right)
-{
-    auto left_native = left.lexically_normal().wstring();
-    auto right_native = right.lexically_normal().wstring();
-    std::ranges::replace(left_native, L'/', L'\\');
-    std::ranges::replace(right_native, L'/', L'\\');
-    return CompareStringOrdinal(left_native.c_str(), -1, right_native.c_str(), -1, TRUE) == CSTR_EQUAL;
-}
-
 bool file_information_matches(const BY_HANDLE_FILE_INFORMATION& left, const BY_HANDLE_FILE_INFORMATION& right)
 {
     return left.dwVolumeSerialNumber == right.dwVolumeSerialNumber && left.nFileIndexHigh == right.nFileIndexHigh
@@ -489,14 +480,13 @@ bool handle_refers_to_path(HANDLE handle, const std::filesystem::path& expected)
     return GetFileInformationByHandle(handle, &information) && file_information_matches(information, expected_information);
 }
 
-bool handle_has_final_path(HANDLE handle, const std::filesystem::path& expected)
+bool handle_matches_expected_path(HANDLE handle, const std::filesystem::path& expected)
 {
     BY_HANDLE_FILE_INFORMATION information { };
     if (!GetFileInformationByHandle(handle, &information) || (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
         return false;
     }
-    const auto final_path = opened_final_path(handle);
-    return final_path.has_value() && windows_paths_equal(*final_path, expected);
+    return handle_refers_to_path(handle, expected);
 }
 #endif
 
@@ -636,7 +626,7 @@ public:
         }
 
         const auto expected_path = windows_full_path(current_path);
-        if (!expected_path || !handle_has_final_path(current, *expected_path)) {
+        if (!expected_path || !handle_matches_expected_path(current, *expected_path)) {
             LogError << "Configuration directory changed while opening" << VAR(current_path);
             if (owns_current) {
                 CloseHandle(current);
@@ -815,7 +805,7 @@ public:
             handle_ = INVALID_HANDLE_VALUE;
             return;
         }
-        if (!handle_has_final_path(handle_, target.directory().path() / lock_name)) {
+        if (!handle_matches_expected_path(handle_, target.directory().path() / lock_name)) {
             LogError << "Configuration lock is not in the trusted configuration directory" << VAR(lock_name);
             CloseHandle(handle_);
             handle_ = INVALID_HANDLE_VALUE;
@@ -940,7 +930,7 @@ public:
 
         BY_HANDLE_FILE_INFORMATION information { };
         if (!GetFileInformationByHandle(handle_, &information) || (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
-            || !handle_has_final_path(handle_, target.directory().path() / file_name_)) {
+            || !handle_matches_expected_path(handle_, target.directory().path() / file_name_)) {
             LogError << "Configuration target is not a trusted regular file" << VAR(file_name_);
             return;
         }
@@ -1166,7 +1156,7 @@ public:
             LogError << "Failed to create temporary configuration" << VAR(target.directory().path() / temporary_name_) << VAR(status);
             return;
         }
-        if (!handle_has_final_path(handle_, target.directory().path() / temporary_name_)) {
+        if (!handle_matches_expected_path(handle_, target.directory().path() / temporary_name_)) {
             LogError << "Temporary configuration left the trusted directory" << VAR(temporary_name_);
             return;
         }
