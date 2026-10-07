@@ -531,7 +531,7 @@ public:
         }
         HANDLE handle = CreateFileW(
             canonical_directory.c_str(),
-            FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+            FILE_READ_ATTRIBUTES | FILE_TRAVERSE | FILE_DELETE_CHILD | SYNCHRONIZE,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             nullptr,
             OPEN_EXISTING,
@@ -626,7 +626,7 @@ public:
             if (!nt_open_relative(
                     current,
                     component,
-                    FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+                    FILE_READ_ATTRIBUTES | FILE_TRAVERSE | FILE_DELETE_CHILD | SYNCHRONIZE,
                     kNtFileOpen,
                     kNtFileDirectoryFile | kNtFileOpenReparsePoint,
                     &next)) {
