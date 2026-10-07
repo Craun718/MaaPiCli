@@ -106,6 +106,7 @@ bool install_configuration_acl(const std::filesystem::path& path)
 }
 #elif defined(__linux__)
 constexpr char kPosixAclXattr[] = "system.posix_acl_access";
+constexpr char kPosixDefaultAclXattr[] = "system.posix_acl_default";
 constexpr uint16_t kAclUserObj = 0x01;
 constexpr uint16_t kAclUser = 0x02;
 constexpr uint16_t kAclGroupObj = 0x04;
@@ -160,6 +161,24 @@ bool install_configuration_acl(const std::filesystem::path& path)
     append_acl_entry(acl, kAclOther, 0, kAclUndefinedId);
 
     return ::setxattr(path.c_str(), kPosixAclXattr, acl.data(), acl.size(), 0) == 0;
+}
+
+bool install_default_configuration_acl(const std::filesystem::path& directory)
+{
+    std::string acl;
+    append_le32(acl, POSIX_ACL_XATTR_VERSION);
+    append_acl_entry(acl, kAclUserObj, kAclRead | kAclWrite, kAclUndefinedId);
+    append_acl_entry(acl, kAclUser, kAclRead, ::geteuid());
+    append_acl_entry(acl, kAclGroupObj, 0, kAclUndefinedId);
+    append_acl_entry(acl, kAclMask, kAclRead, kAclUndefinedId);
+    append_acl_entry(acl, kAclOther, 0, kAclUndefinedId);
+
+    return ::setxattr(directory.c_str(), kPosixDefaultAclXattr, acl.data(), acl.size(), 0) == 0;
+}
+
+bool remove_configuration_acl(const std::filesystem::path& path)
+{
+    return ::removexattr(path.c_str(), kPosixAclXattr, 0) == 0;
 }
 #endif
 
@@ -669,6 +688,18 @@ int main()
             require(saved_acl.has_value() && *saved_acl == *original_acl, "saving a configuration should preserve its existing ACL");
             require(!std::filesystem::exists(config_path.string() + ".tmp"), "an ACL-preserving save should clean its temporary file");
         }
+#if defined(__linux__)
+        if (remove_configuration_acl(config_path) && install_default_configuration_acl(config_path.parent_path())
+            && !configuration_acl_data(config_path).has_value()) {
+            MAA_PROJECT_INTERFACE_NS::Configurator inherited_acl_configurator;
+            require(inherited_acl_configurator.load(resource_dir, user_dir), "the inherited ACL configuration fixture should reload");
+            inherited_acl_configurator.configuration().resource = "default-resource";
+            require(inherited_acl_configurator.save(user_dir), "the inherited ACL configuration fixture should save");
+            require(
+                !configuration_acl_data(config_path).has_value(),
+                "saving a configuration without an ACL should remove an inherited ACL");
+        }
+#endif
 #endif
 
         std::filesystem::remove_all(resource_dir);
@@ -695,7 +726,7 @@ int main()
         }
 
         const auto linked_config_path = user_dir / "config/maa_pi_config.json";
-        const auto target_config_path = user_dir / "linked-config.json";
+        const auto target_config_path = user_dir / "config/linked-config.json";
         {
             std::ofstream target_stream(target_config_path);
             target_stream << R"json({
@@ -705,7 +736,7 @@ int main()
 }
 )json";
         }
-        std::filesystem::create_symlink(std::filesystem::path("..") / "linked-config.json", linked_config_path);
+        std::filesystem::create_symlink("linked-config.json", linked_config_path);
 
         MAA_PROJECT_INTERFACE_NS::Configurator configurator;
         require(configurator.load(resource_dir, user_dir), "the symlinked configuration fixture should load");
@@ -721,8 +752,104 @@ int main()
             !std::filesystem::exists(target_config_path.string() + ".tmp"),
             "a symlinked configuration save should clean its temporary file");
 
+        const auto external_config_path = user_dir / "linked-config.json";
+        {
+            std::ofstream external_stream(external_config_path);
+            external_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": []
+}
+)json";
+        }
+        std::filesystem::remove(linked_config_path);
+        std::filesystem::create_symlink(std::filesystem::path("..") / "linked-config.json", linked_config_path);
+
+        MAA_PROJECT_INTERFACE_NS::Configurator rejected_configurator;
+        require(rejected_configurator.load(resource_dir, user_dir), "the external symlink configuration fixture should load");
+        rejected_configurator.configuration().resource = "other-resource";
+        require(!rejected_configurator.save(user_dir), "saving should reject a configuration symlink outside the configuration directory");
+        const auto external_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(external_config_path);
+        require(
+            external_config && external_config->resource == "default-resource",
+            "a rejected configuration symlink should not replace its external target");
+
         std::filesystem::remove_all(resource_dir);
         std::filesystem::remove_all(user_dir);
+    }
+
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto shared_user_dir = unique_temp_directory();
+        const auto first_user_dir = unique_temp_directory();
+        const auto second_user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(shared_user_dir / "config");
+        std::filesystem::create_directories(first_user_dir);
+        std::filesystem::create_directories(second_user_dir);
+        std::filesystem::create_directory_symlink(shared_user_dir / "config", first_user_dir / "config");
+        std::filesystem::create_directory_symlink(shared_user_dir / "config", second_user_dir / "config");
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json({
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] },
+        { "name": "other-resource", "path": [ "resource" ] }
+    ],
+    "task": [ { "name": "local-task", "entry": "LocalTask" } ],
+    "welcome": "Welcome update"
+}
+)json";
+        }
+
+        const auto shared_config_path = shared_user_dir / "config/maa_pi_config.json";
+        {
+            std::ofstream config_stream(shared_config_path);
+            config_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": [],
+    "last_welcome": [ "old-welcome" ],
+    "last_resolved_welcome": [ "Old welcome" ]
+}
+)json";
+        }
+
+        MAA_PROJECT_INTERFACE_NS::Configurator first;
+        MAA_PROJECT_INTERFACE_NS::Configurator second;
+        require(first.load(resource_dir, first_user_dir), "the first aliased configuration fixture should load");
+        require(second.load(resource_dir, second_user_dir), "the second aliased configuration fixture should load");
+
+        first.configuration().resource = "other-resource";
+        require(first.save(first_user_dir), "the first aliased local configuration edit should save");
+
+        second.configuration().task.emplace_back(MAA_PROJECT_INTERFACE_NS::Configuration::Task { .name = "local-task" });
+        require(second.save(second_user_dir), "the second aliased local configuration edit should save");
+        const auto changed = second.update_welcome_snapshots(second_user_dir, { "Welcome update" }, { "Welcome update" });
+        require(changed.has_value() && *changed, "the changed aliased welcome snapshot should save");
+
+        const auto saved_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(shared_config_path);
+        require(
+            saved_config && saved_config->resource == "other-resource" && saved_config->task.size() == 1
+                && saved_config->task.front().name == "local-task",
+            "aliased configuration edits should preserve each other");
+        require(
+            saved_config && saved_config->last_welcome == std::vector<std::string> { "Welcome update" }
+                && saved_config->last_resolved_welcome == std::vector<std::string> { "Welcome update" },
+            "aliased welcome snapshots should preserve newer configuration settings");
+        require(
+            std::filesystem::exists(shared_user_dir / "config/.maa_pi_config.lock")
+                && std::filesystem::is_symlink(std::filesystem::symlink_status(first_user_dir / "config"))
+                && std::filesystem::is_symlink(std::filesystem::symlink_status(second_user_dir / "config")),
+            "aliased configuration saves should share one canonical lock");
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(shared_user_dir);
+        std::filesystem::remove_all(first_user_dir);
+        std::filesystem::remove_all(second_user_dir);
     }
 #endif
 

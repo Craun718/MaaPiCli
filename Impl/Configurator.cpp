@@ -294,12 +294,48 @@ void remove_temporary_file(const std::filesystem::path& path)
     }
 }
 
+bool path_is_within_directory(const std::filesystem::path& path, const std::filesystem::path& directory)
+{
+    const auto relative = path.lexically_relative(directory);
+    if (relative.empty() || relative == std::filesystem::path(".")) {
+        return false;
+    }
+    for (const auto& component : relative) {
+        if (component == std::filesystem::path("..")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<std::filesystem::path> resolve_configuration_target(const std::filesystem::path& config_path)
+{
+    std::error_code error;
+    const auto target_path = std::filesystem::weakly_canonical(config_path, error);
+    if (error) {
+        LogError << "Failed to resolve configuration target" << VAR(config_path) << VAR(error.message());
+        return std::nullopt;
+    }
+
+    const auto trusted_directory = std::filesystem::weakly_canonical(config_path.parent_path(), error);
+    if (error) {
+        LogError << "Failed to resolve configuration directory" << VAR(config_path.parent_path()) << VAR(error.message());
+        return std::nullopt;
+    }
+    if (!path_is_within_directory(target_path, trusted_directory)) {
+        LogError << "Configuration target is outside its configuration directory" << VAR(config_path) << VAR(target_path);
+        return std::nullopt;
+    }
+
+    return target_path;
+}
+
 class ConfigFileLock
 {
 public:
-    explicit ConfigFileLock(const std::filesystem::path& user_dir)
+    explicit ConfigFileLock(const std::filesystem::path& configuration_directory)
     {
-        lock_path_ = user_dir / "config" / ".maa_pi_config.lock";
+        lock_path_ = configuration_directory / ".maa_pi_config.lock";
         if (!create_config_directory(lock_path_.parent_path())) {
             return;
         }
@@ -387,26 +423,47 @@ public:
 #ifdef _WIN32
         SECURITY_ATTRIBUTES* security_attributes = nullptr;
         SECURITY_ATTRIBUTES attributes { };
+        PSECURITY_DESCRIPTOR security_descriptor = nullptr;
+        OnScopeLeave free_security_descriptor([&]() {
+            if (security_descriptor != nullptr) {
+                LocalFree(security_descriptor);
+            }
+        });
+
         if (preserve_existing) {
             PSID owner = nullptr;
             PSID group = nullptr;
             PACL dacl = nullptr;
             PACL sacl = nullptr;
-            PSECURITY_DESCRIPTOR security_descriptor = nullptr;
-            const auto result = GetNamedSecurityInfoW(
+            auto security_information =
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
+            auto result = GetNamedSecurityInfoW(
                 target_path.c_str(),
                 SE_FILE_OBJECT,
-                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                security_information,
                 &owner,
                 &group,
                 &dacl,
                 &sacl,
                 &security_descriptor);
+            if (result == ERROR_ACCESS_DENIED || result == ERROR_PRIVILEGE_NOT_HELD) {
+                // Reading SACLs requires ACCESS_SYSTEM_SECURITY. Fall back to the
+                // previously supported subset for callers without that privilege.
+                security_information = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+                result = GetNamedSecurityInfoW(
+                    target_path.c_str(),
+                    SE_FILE_OBJECT,
+                    security_information,
+                    &owner,
+                    &group,
+                    &dacl,
+                    &sacl,
+                    &security_descriptor);
+            }
             if (result != ERROR_SUCCESS || security_descriptor == nullptr) {
                 LogError << "Failed to read configuration security information" << VAR(target_path) << VAR(result);
                 return;
             }
-            OnScopeLeave([&]() { LocalFree(security_descriptor); });
 
             attributes.nLength = sizeof(attributes);
             attributes.lpSecurityDescriptor = security_descriptor;
@@ -522,13 +579,34 @@ public:
             return false;
         }
 #if defined(__APPLE__)
-        if (existing_acl_ != nullptr && ::acl_set_fd_np(descriptor_, existing_acl_, kConfigAclType) != 0) {
-            LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
-            return false;
+        if (existing_acl_ != nullptr) {
+            if (::acl_set_fd_np(descriptor_, existing_acl_, kConfigAclType) != 0) {
+                LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
+                return false;
+            }
+        }
+        else {
+            acl_t empty_acl = ::acl_init(0);
+            if (empty_acl == nullptr) {
+                LogError << "Failed to create an empty configuration ACL" << VAR(temporary_path_) << VAR(errno);
+                return false;
+            }
+            const bool cleared = ::acl_set_fd_np(descriptor_, empty_acl, kConfigAclType) == 0 || missing_acl_error(errno);
+            ::acl_free(empty_acl);
+            if (!cleared) {
+                LogError << "Failed to clear inherited configuration ACL" << VAR(temporary_path_) << VAR(errno);
+                return false;
+            }
         }
 #elif defined(__linux__)
-        if (!existing_acl_.empty() && ::fsetxattr(descriptor_, kPosixAclXattr, existing_acl_.data(), existing_acl_.size(), 0) != 0) {
-            LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
+        if (!existing_acl_.empty()) {
+            if (::fsetxattr(descriptor_, kPosixAclXattr, existing_acl_.data(), existing_acl_.size(), 0) != 0) {
+                LogError << "Failed to preserve configuration ACL" << VAR(temporary_path_) << VAR(errno);
+                return false;
+            }
+        }
+        else if (::fremovexattr(descriptor_, kPosixAclXattr) != 0 && !missing_xattr_error(errno)) {
+            LogError << "Failed to clear inherited configuration ACL" << VAR(temporary_path_) << VAR(errno);
             return false;
         }
 #endif
@@ -585,24 +663,9 @@ private:
 #endif
 };
 
-bool write_configuration(const Configuration& config, const std::filesystem::path& config_path)
+bool write_configuration(const Configuration& config, const std::filesystem::path& target_path)
 {
     std::error_code error;
-    auto link_status = std::filesystem::symlink_status(config_path, error);
-    if (error) {
-        LogError << "Failed to inspect configuration path" << VAR(config_path) << VAR(error.message());
-        return false;
-    }
-
-    auto target_path = config_path;
-    if (std::filesystem::is_symlink(link_status)) {
-        target_path = std::filesystem::weakly_canonical(config_path, error);
-        if (error) {
-            LogError << "Failed to resolve configuration symlink" << VAR(config_path) << VAR(error.message());
-            return false;
-        }
-    }
-
     const auto target_status = std::filesystem::status(target_path, error);
     if (error) {
         LogError << "Failed to inspect configuration target" << VAR(target_path) << VAR(error.message());
@@ -729,18 +792,23 @@ bool Configurator::save(const std::filesystem::path& user_dir)
 {
     LogInfo << VAR(user_dir);
 
-    ConfigFileLock lock(user_dir);
+    const auto config_path = user_dir / kConfigPath;
+    const auto target_path = resolve_configuration_target(config_path);
+    if (!target_path) {
+        return false;
+    }
+
+    ConfigFileLock lock(target_path->parent_path());
     if (!lock.valid()) {
         return false;
     }
 
-    const auto config_path = user_dir / kConfigPath;
     auto persisted_config = config_;
     std::error_code error;
-    if (std::filesystem::exists(config_path, error)) {
-        auto latest_config = Parser::parse_config(config_path);
+    if (std::filesystem::exists(*target_path, error)) {
+        auto latest_config = Parser::parse_config(*target_path);
         if (!latest_config) {
-            LogError << "Failed to reload configuration" << VAR(config_path);
+            LogError << "Failed to reload configuration" << VAR(*target_path);
             return false;
         }
         persisted_config = *std::move(latest_config);
@@ -750,7 +818,7 @@ bool Configurator::save(const std::filesystem::path& user_dir)
         }
     }
     else if (error) {
-        LogError << "Failed to inspect configuration" << VAR(config_path) << VAR(error.message());
+        LogError << "Failed to inspect configuration" << VAR(*target_path) << VAR(error.message());
         return false;
     }
 
@@ -762,7 +830,7 @@ bool Configurator::save(const std::filesystem::path& user_dir)
         return false;
     }
 
-    if (!write_configuration(stored_config, config_path)) {
+    if (!write_configuration(stored_config, *target_path)) {
         return false;
     }
 
@@ -777,25 +845,30 @@ std::optional<bool> Configurator::update_welcome_snapshots(
     std::vector<std::string> resolved)
 {
     const auto config_path = user_dir / kConfigPath;
-    std::error_code error;
-    const auto config_exists = std::filesystem::exists(config_path, error);
-    if (error) {
-        LogError << "Failed to inspect configuration" << VAR(config_path) << VAR(error.message());
-        return std::nullopt;
-    }
-    if (!config_exists) {
-        LogError << "Cannot update welcome snapshots before a configuration exists" << VAR(config_path);
+    const auto target_path = resolve_configuration_target(config_path);
+    if (!target_path) {
         return std::nullopt;
     }
 
-    ConfigFileLock lock(user_dir);
+    ConfigFileLock lock(target_path->parent_path());
     if (!lock.valid()) {
         return std::nullopt;
     }
 
-    auto persisted_config = Parser::parse_config(config_path);
+    std::error_code error;
+    const auto config_exists = std::filesystem::exists(*target_path, error);
+    if (error) {
+        LogError << "Failed to inspect configuration" << VAR(*target_path) << VAR(error.message());
+        return std::nullopt;
+    }
+    if (!config_exists) {
+        LogError << "Cannot update welcome snapshots before a configuration exists" << VAR(*target_path);
+        return std::nullopt;
+    }
+
+    auto persisted_config = Parser::parse_config(*target_path);
     if (!persisted_config) {
-        LogError << "Failed to reload configuration for welcome snapshots" << VAR(config_path);
+        LogError << "Failed to reload configuration for welcome snapshots" << VAR(*target_path);
         return std::nullopt;
     }
 
@@ -823,7 +896,7 @@ std::optional<bool> Configurator::update_welcome_snapshots(
         return std::nullopt;
     }
 
-    if (!write_configuration(stored_config, config_path)) {
+    if (!write_configuration(stored_config, *target_path)) {
         return std::nullopt;
     }
 
