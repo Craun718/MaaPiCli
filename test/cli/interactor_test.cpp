@@ -382,6 +382,126 @@ int main()
         std::filesystem::remove_all(user_dir);
     }
 
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(user_dir / "config");
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json({
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [ { "name": "default-resource", "path": [ "resource" ] } ],
+    "welcome": "Welcome update"
+}
+)json";
+        }
+
+        {
+            std::ofstream config_stream(user_dir / "config" / "maa_pi_config.json");
+            config_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": [],
+    "last_welcome": [ "old-welcome" ],
+    "last_resolved_welcome": [ "Old welcome" ]
+}
+)json";
+        }
+
+        {
+            StreamRedirector redirector("7\n");
+            Interactor interactor(user_dir);
+            require(interactor.load(resource_dir), "the welcome fixture should load");
+            require(interactor.interact(), "exiting after a welcome update should succeed");
+            require(redirector.output().str().find("Welcome update") != std::string::npos, "a changed welcome should be shown");
+        }
+
+        auto saved_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(user_dir / "config/maa_pi_config.json");
+        require(saved_config.has_value(), "a shown welcome should be persisted immediately");
+        require(
+            saved_config && saved_config->last_welcome == std::vector<std::string> { "Welcome update" }
+                && saved_config->last_resolved_welcome == std::vector<std::string> { "Welcome update" },
+            "welcome snapshots should match the shown announcement");
+
+        {
+            StreamRedirector redirector("7\n");
+            Interactor interactor(user_dir);
+            require(interactor.load(resource_dir), "the persisted welcome fixture should reload");
+            require(interactor.interact(), "exiting after an unchanged welcome should succeed");
+            require(redirector.output().str().find("Welcome update") == std::string::npos, "an unchanged welcome should not be shown");
+        }
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(user_dir);
+    }
+
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(user_dir / "config");
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json({
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [
+        { "name": "default-resource", "path": [ "resource" ] },
+        { "name": "other-resource", "path": [ "resource" ] }
+    ],
+    "task": [ { "name": "local-task", "entry": "LocalTask" } ],
+    "welcome": "Welcome update"
+}
+)json";
+        }
+
+        {
+            std::ofstream config_stream(user_dir / "config" / "maa_pi_config.json");
+            config_stream << R"json({
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": [],
+    "last_welcome": [ "old-welcome" ],
+    "last_resolved_welcome": [ "Old welcome" ]
+}
+)json";
+        }
+
+        MAA_PROJECT_INTERFACE_NS::Configurator first;
+        MAA_PROJECT_INTERFACE_NS::Configurator second;
+        require(first.load(resource_dir, user_dir), "the first concurrent-save fixture should load");
+        require(second.load(resource_dir, user_dir), "the second concurrent-save fixture should load");
+
+        first.configuration().resource = "other-resource";
+        require(first.save(user_dir), "the first local configuration edit should save");
+
+        second.configuration().task.emplace_back(MAA_PROJECT_INTERFACE_NS::Configuration::Task { .name = "local-task" });
+        require(second.save(user_dir), "the second local configuration edit should save");
+
+        const auto changed = second.update_welcome_snapshots(user_dir, { "Welcome update" }, { "Welcome update" });
+        require(changed.has_value() && *changed, "the changed welcome snapshot should save");
+
+        const auto saved_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(user_dir / "config/maa_pi_config.json");
+        require(
+            saved_config && saved_config->resource == "other-resource" && saved_config->task.size() == 1
+                && saved_config->task.front().name == "local-task",
+            "independent local edits should be preserved together");
+        require(
+            saved_config && saved_config->last_welcome == std::vector<std::string> { "Welcome update" }
+                && saved_config->last_resolved_welcome == std::vector<std::string> { "Welcome update" },
+            "updating welcome snapshots should preserve newer configuration settings");
+        require(
+            !std::filesystem::exists(user_dir / "config/maa_pi_config.json.tmp"),
+            "successful configuration writes should not leave a temporary file");
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(user_dir);
+    }
+
     if (failures != 0) {
         std::cerr << failures << " interactor test assertion(s) failed\n";
         return 1;
