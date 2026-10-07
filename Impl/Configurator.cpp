@@ -488,6 +488,16 @@ bool handle_matches_expected_path(HANDLE handle, const std::filesystem::path& ex
     }
     return handle_refers_to_path(handle, expected);
 }
+
+bool handle_is_in_directory(HANDLE handle, HANDLE directory)
+{
+    BY_HANDLE_FILE_INFORMATION information { };
+    if (!GetFileInformationByHandle(handle, &information) || (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+        return false;
+    }
+    const auto final_path = opened_final_path(handle);
+    return final_path.has_value() && !final_path->parent_path().empty() && handle_refers_to_path(directory, final_path->parent_path());
+}
 #endif
 
 class TrustedConfigurationDirectory
@@ -805,7 +815,7 @@ public:
             handle_ = INVALID_HANDLE_VALUE;
             return;
         }
-        if (!handle_matches_expected_path(handle_, target.directory().path() / lock_name)) {
+        if (!handle_is_in_directory(handle_, target.directory().handle())) {
             LogError << "Configuration lock is not in the trusted configuration directory" << VAR(lock_name);
             CloseHandle(handle_);
             handle_ = INVALID_HANDLE_VALUE;
@@ -930,7 +940,7 @@ public:
 
         BY_HANDLE_FILE_INFORMATION information { };
         if (!GetFileInformationByHandle(handle_, &information) || (information.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0
-            || !handle_matches_expected_path(handle_, target.directory().path() / file_name_)) {
+            || !handle_is_in_directory(handle_, target.directory().handle())) {
             LogError << "Configuration target is not a trusted regular file" << VAR(file_name_);
             return;
         }
@@ -1156,7 +1166,7 @@ public:
             LogError << "Failed to create temporary configuration" << VAR(target.directory().path() / temporary_name_) << VAR(status);
             return;
         }
-        if (!handle_matches_expected_path(handle_, target.directory().path() / temporary_name_)) {
+        if (!handle_is_in_directory(handle_, target.directory().handle())) {
             LogError << "Temporary configuration left the trusted directory" << VAR(temporary_name_);
             return;
         }
