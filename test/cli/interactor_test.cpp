@@ -178,7 +178,7 @@ bool install_default_configuration_acl(const std::filesystem::path& directory)
 
 bool remove_configuration_acl(const std::filesystem::path& path)
 {
-    return ::removexattr(path.c_str(), kPosixAclXattr, 0) == 0;
+    return ::removexattr(path.c_str(), kPosixAclXattr) == 0;
 }
 #endif
 
