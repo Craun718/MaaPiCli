@@ -21,7 +21,7 @@ void request_windows_emulate_vt100()
     DWORD out_mode = 0;
     GetConsoleMode(stdout_handle, &out_mode);
 
-    // https://docs.microsoft.com/en-us/windows/console/setconsolemode
+    // https://learn.microsoft.com/en-us/windows/console/setconsolemode
     const int enable_virtual_terminal_processing = 0x0004;
     const int disable_newline_auto_return = 0x0008;
     out_mode |= enable_virtual_terminal_processing;
