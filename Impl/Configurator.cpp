@@ -453,20 +453,6 @@ public:
                 &dacl,
                 &sacl,
                 &security_descriptor.descriptor);
-            if (result == ERROR_ACCESS_DENIED || result == ERROR_PRIVILEGE_NOT_HELD) {
-                // Reading SACLs requires ACCESS_SYSTEM_SECURITY. Fall back to the
-                // previously supported subset for callers without that privilege.
-                security_information = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
-                result = GetNamedSecurityInfoW(
-                    target_path.c_str(),
-                    SE_FILE_OBJECT,
-                    security_information,
-                    &owner,
-                    &group,
-                    &dacl,
-                    &sacl,
-                    &security_descriptor.descriptor);
-            }
             if (result != ERROR_SUCCESS || security_descriptor.descriptor == nullptr) {
                 LogError << "Failed to read configuration security information" << VAR(target_path) << VAR(result);
                 return;
