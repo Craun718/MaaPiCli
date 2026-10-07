@@ -1151,7 +1151,7 @@ public:
 
 #ifdef _WIN32
         NTSTATUS status = 0;
-        ACCESS_MASK desired_access = DELETE | GENERIC_WRITE | WRITE_OWNER | WRITE_DAC | SYNCHRONIZE;
+        ACCESS_MASK desired_access = DELETE | FILE_READ_ATTRIBUTES | GENERIC_WRITE | WRITE_OWNER | WRITE_DAC | SYNCHRONIZE;
         if (existing.exists() && (existing.security_information() & SACL_SECURITY_INFORMATION) != 0) {
             desired_access |= ACCESS_SYSTEM_SECURITY;
         }
