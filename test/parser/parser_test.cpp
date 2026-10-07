@@ -364,6 +364,25 @@ int main()
         zero_max_json && Parser::parse_interface(*zero_max_json).has_value(),
         "max_count zero should accept an empty checkbox selection");
 
+    auto interception_keyboard_json = json::parse(
+        R"json({
+            "interface_version": 2,
+            "controller": [{
+                "name": "win32-controller",
+                "type": "Win32",
+                "win32": {
+                    "keyboard": "Interception"
+                }
+            }],
+            "resource": [{ "name": "default-resource", "path": ["resource"] }]
+        })json");
+    require(interception_keyboard_json.has_value(), "Interception keyboard fixture should parse as JSON");
+    auto interception_keyboard = interception_keyboard_json ? Parser::parse_interface(*interception_keyboard_json) : std::nullopt;
+    require(interception_keyboard.has_value(), "the v5.14.0 Win32 keyboard method should parse");
+    require(
+        interception_keyboard && interception_keyboard->controller.front().win32.keyboard == "Interception",
+        "the Interception keyboard method should be preserved");
+
     {
         auto single_welcome_json = json::parse(
             R"json({
@@ -378,6 +397,20 @@ int main()
         require(
             single_welcome && Parser::welcome_items(single_welcome->welcome) == std::vector<std::string> { "welcome" },
             "a legacy string welcome should flatten to one ordered item");
+
+        auto empty_welcome_string_json = json::parse(
+            R"json({
+                "interface_version": 2,
+                "controller": [{ "name": "default-controller", "type": "Adb" }],
+                "resource": [{ "name": "default-resource", "path": ["resource"] }],
+                "welcome": ""
+            })json");
+        require(empty_welcome_string_json.has_value(), "empty legacy welcome fixture should parse as JSON");
+        auto empty_welcome_string = empty_welcome_string_json ? Parser::parse_interface(*empty_welcome_string_json) : std::nullopt;
+        require(empty_welcome_string.has_value(), "an empty legacy string welcome should parse");
+        require(
+            empty_welcome_string && Parser::welcome_items(empty_welcome_string->welcome).empty(),
+            "an empty legacy string welcome should flatten to no items");
 
         auto multiple_welcome_json = json::parse(
             R"json({
@@ -616,7 +649,18 @@ int main()
                 && welcome_config->last_resolved_welcome == std::vector<std::string> { "First", "Second" },
             "welcome snapshots should retain order");
         auto roundtrip = welcome_config->to_json();
-        require(roundtrip.contains("last_welcome") && roundtrip.contains("last_resolved_welcome"), "welcome snapshots should serialize");
+        const auto serialized_items = [](const json::value& value) {
+            std::vector<std::string> items;
+            for (const auto& item : value.as_array()) {
+                items.push_back(item.as_string());
+            }
+            return items;
+        };
+        require(
+            roundtrip.contains("last_welcome") && roundtrip.contains("last_resolved_welcome")
+                && serialized_items(roundtrip["last_welcome"]) == std::vector<std::string> { "first", "second" }
+                && serialized_items(roundtrip["last_resolved_welcome"]) == std::vector<std::string> { "First", "Second" },
+            "ordered welcome snapshots should serialize exactly");
     }
 
     auto linux_config_json = json::parse(

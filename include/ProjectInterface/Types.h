@@ -388,6 +388,8 @@ struct Configuration
         std::string name;
         std::vector<Option> option;
 
+        bool operator==(const Pretask&) const = default;
+
         MEO_JSONIZATION(name, MEO_OPT option);
     };
 
@@ -395,6 +397,8 @@ struct Configuration
     {
         std::string name;
         InterfaceData::Controller::Type type = InterfaceData::Controller::Type::Adb;
+
+        bool operator==(const Controller&) const = default;
 
         MEO_JSONIZATION(name);
     };
@@ -407,6 +411,8 @@ struct Configuration
 
         int _placeholder = 0;
 
+        bool operator==(const Win32Config&) const = default;
+
         MEO_JSONIZATION(MEO_OPT _placeholder);
     };
 
@@ -417,6 +423,8 @@ struct Configuration
         std::string screencap;
         std::string input;
 
+        bool operator==(const MacOSConfig&) const = default;
+
         MEO_JSONIZATION(MEO_OPT window_id, MEO_OPT title, MEO_OPT screencap, MEO_OPT input);
     };
 
@@ -426,6 +434,8 @@ struct Configuration
         std::string adb_path;
         std::string address;
 
+        bool operator==(const AdbConfig&) const = default;
+
         MEO_JSONIZATION(name, adb_path, address);
     };
 
@@ -433,6 +443,8 @@ struct Configuration
     {
         std::string address;
         std::string uuid;
+
+        bool operator==(const PlayCoverConfig&) const = default;
 
         MEO_JSONIZATION(MEO_OPT address, MEO_OPT uuid);
     };
@@ -446,6 +458,8 @@ struct Configuration
 
         int _placeholder = 0;
 
+        bool operator==(const GamepadConfig&) const = default;
+
         MEO_JSONIZATION(MEO_OPT _placeholder, MEO_OPT gamepad_type);
     };
 
@@ -455,6 +469,8 @@ struct Configuration
         int uinput_screen_width = 0;
         int uinput_screen_height = 0;
         std::string eis_socket_path;
+
+        bool operator==(const LinuxConfig&) const = default;
 
         MEO_JSONIZATION(MEO_OPT wlr_socket_path, MEO_OPT uinput_screen_width, MEO_OPT uinput_screen_height, MEO_OPT eis_socket_path);
     };
@@ -466,6 +482,8 @@ struct Configuration
         std::vector<std::string> values;                     // for checkbox
         std::unordered_map<std::string, std::string> inputs; // for input type
 
+        bool operator==(const Option&) const = default;
+
         MEO_JSONIZATION(name, MEO_OPT value, MEO_OPT values, MEO_OPT inputs);
     };
 
@@ -473,6 +491,8 @@ struct Configuration
     {
         std::string name;
         std::vector<Option> option;
+
+        bool operator==(const Task&) const = default;
 
         MEO_JSONIZATION(name, MEO_OPT option);
     };
