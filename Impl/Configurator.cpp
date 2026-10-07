@@ -421,14 +421,21 @@ public:
         remove_temporary_file(temporary_path_);
 
 #ifdef _WIN32
+        struct SecurityDescriptorGuard
+        {
+            PSECURITY_DESCRIPTOR descriptor = nullptr;
+
+            ~SecurityDescriptorGuard()
+            {
+                if (descriptor != nullptr) {
+                    LocalFree(descriptor);
+                }
+            }
+        };
+
         SECURITY_ATTRIBUTES* security_attributes = nullptr;
         SECURITY_ATTRIBUTES attributes { };
-        PSECURITY_DESCRIPTOR security_descriptor = nullptr;
-        OnScopeLeave free_security_descriptor([&]() {
-            if (security_descriptor != nullptr) {
-                LocalFree(security_descriptor);
-            }
-        });
+        SecurityDescriptorGuard security_descriptor;
 
         if (preserve_existing) {
             PSID owner = nullptr;
@@ -445,7 +452,7 @@ public:
                 &group,
                 &dacl,
                 &sacl,
-                &security_descriptor);
+                &security_descriptor.descriptor);
             if (result == ERROR_ACCESS_DENIED || result == ERROR_PRIVILEGE_NOT_HELD) {
                 // Reading SACLs requires ACCESS_SYSTEM_SECURITY. Fall back to the
                 // previously supported subset for callers without that privilege.
@@ -458,15 +465,15 @@ public:
                     &group,
                     &dacl,
                     &sacl,
-                    &security_descriptor);
+                    &security_descriptor.descriptor);
             }
-            if (result != ERROR_SUCCESS || security_descriptor == nullptr) {
+            if (result != ERROR_SUCCESS || security_descriptor.descriptor == nullptr) {
                 LogError << "Failed to read configuration security information" << VAR(target_path) << VAR(result);
                 return;
             }
 
             attributes.nLength = sizeof(attributes);
-            attributes.lpSecurityDescriptor = security_descriptor;
+            attributes.lpSecurityDescriptor = security_descriptor.descriptor;
             security_attributes = &attributes;
         }
 
