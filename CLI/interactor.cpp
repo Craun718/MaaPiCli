@@ -547,30 +547,27 @@ bool Interactor::show_welcome_if_changed()
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     const auto declared_welcome = Parser::welcome_items(config_.interface_data().welcome);
-    if (declared_welcome.empty()) {
-        auto& config = config_.configuration();
-        config.last_welcome.clear();
-        config.last_resolved_welcome.clear();
-        return false;
-    }
-
     std::vector<std::string> resolved_welcome;
     resolved_welcome.reserve(declared_welcome.size());
     for (const auto& item : declared_welcome) {
         resolved_welcome.emplace_back(read_text_content(item));
     }
 
-    const auto& config = config_.configuration();
-    if (config.last_welcome == declared_welcome && config.last_resolved_welcome == resolved_welcome) {
+    const auto changed = config_.update_welcome_snapshots(user_path_, std::move(declared_welcome), std::move(resolved_welcome));
+    if (!changed.has_value()) {
+        LogError << "Failed to save welcome snapshots";
+        std::cout << "\nFailed to save welcome announcements.\n\n";
+        return false;
+    }
+    if (!*changed) {
         return false;
     }
 
-    for (const auto& welcome_text : resolved_welcome) {
+    auto& config = config_.configuration();
+    for (const auto& welcome_text : config.last_resolved_welcome) {
         std::cout << MAA_NS::utf8_to_crt(welcome_text) << "\n\n";
     }
 
-    config_.configuration().last_welcome = declared_welcome;
-    config_.configuration().last_resolved_welcome = resolved_welcome;
     return true;
 }
 
