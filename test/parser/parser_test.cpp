@@ -344,6 +344,9 @@ int main()
     require(
         !Parser::parse_interface(fixture_dir / "invalid_option_defaults.json").has_value(),
         "invalid or unknown checkbox defaults should be rejected");
+    require(
+        !Parser::parse_interface(fixture_dir / "invalid_hotkey.json").has_value(),
+        "a hotkey option in an import should be rejected as an unsupported option type");
 
     auto zero_max_json = json::parse(
         R"json({
