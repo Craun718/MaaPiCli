@@ -130,7 +130,7 @@ namespace
 constexpr DWORD kMaxPathBuffer = 32768;
 
 // ShellExecuteW return value threshold: values > 32 indicate success, <= 32 indicate error codes.
-// See: https://docs.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
+// See: https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shellexecutew
 constexpr intptr_t kShellExecuteSuccessThreshold = 32;
 
 bool is_running_as_admin()
