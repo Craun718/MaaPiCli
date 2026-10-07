@@ -157,6 +157,7 @@ constexpr ULONG kNtFileCreate = 0x00000002;
 constexpr ULONG kNtFileOpenIf = 0x00000003;
 constexpr NTSTATUS kNtObjectNameNotFound = static_cast<NTSTATUS>(0xC0000034u);
 constexpr NTSTATUS kNtObjectPathNotFound = static_cast<NTSTATUS>(0xC000003Au);
+constexpr NTSTATUS kNtPrivilegeNotHeld = static_cast<NTSTATUS>(0xC0000061u);
 
 struct FileRenameRequest
 {
@@ -829,10 +830,11 @@ public:
     {
 #ifdef _WIN32
         NTSTATUS status = 0;
+        const ACCESS_MASK base_access = GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
         if (!nt_open_relative(
                 target.directory().handle(),
                 file_name_.wstring(),
-                GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+                base_access | ACCESS_SYSTEM_SECURITY,
                 kNtFileOpen,
                 kNtFileOpenReparsePoint | kNtFileNonDirectoryFile,
                 &handle_,
@@ -840,11 +842,35 @@ public:
             if (status == kNtObjectNameNotFound || status == kNtObjectPathNotFound) {
                 exists_ = false;
                 valid_ = true;
+                return;
+            }
+
+            if (status == kNtPrivilegeNotHeld) {
+                if (!nt_open_relative(
+                        target.directory().handle(),
+                        file_name_.wstring(),
+                        base_access,
+                        kNtFileOpen,
+                        kNtFileOpenReparsePoint | kNtFileNonDirectoryFile,
+                        &handle_,
+                        &status)) {
+                    if (status == kNtObjectNameNotFound || status == kNtObjectPathNotFound) {
+                        exists_ = false;
+                        valid_ = true;
+                    }
+                    else {
+                        LogError << "Failed to open existing configuration" << VAR(file_name_) << VAR(status);
+                    }
+                    return;
+                }
             }
             else {
                 LogError << "Failed to open existing configuration" << VAR(file_name_) << VAR(status);
+                return;
             }
-            return;
+        }
+        else {
+            security_information_ |= SACL_SECURITY_INFORMATION;
         }
 
         BY_HANDLE_FILE_INFORMATION information { };
@@ -858,7 +884,7 @@ public:
         auto result = GetSecurityInfo(
             handle_,
             SE_FILE_OBJECT,
-            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION,
+            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | security_information_,
             &owner_,
             &group_,
             &dacl_,
@@ -868,8 +894,18 @@ public:
             LogError << "Failed to read configuration security information" << VAR(file_name_) << VAR(result);
             return;
         }
-        security_information_ =
-            OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
+
+        if ((security_information_ & SACL_SECURITY_INFORMATION) == 0) {
+            SECURITY_DESCRIPTOR_CONTROL descriptor_control = 0;
+            DWORD revision = 0;
+            if (!GetSecurityDescriptorControl(security_descriptor_, &descriptor_control, &revision)
+                || (descriptor_control & SE_SACL_PRESENT) != 0) {
+                LogError << "Failed to verify configuration SACL" << VAR(file_name_) << VAR(GetLastError());
+                return;
+            }
+        }
+
+        security_information_ |= OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
         if (sacl_ == nullptr) {
             security_information_ &= ~SACL_SECURITY_INFORMATION;
         }
