@@ -41,9 +41,7 @@ extern "C" void sig_handler(int sig)
 int main(int argc, char** argv)
 {
     std::signal(SIGTERM, sig_handler);
-    std::signal(SIGSEGV, sig_handler);
     std::signal(SIGINT, sig_handler);
-    std::signal(SIGABRT, sig_handler);
 
     request_windows_emulate_vt100();
 
