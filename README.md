@@ -49,7 +49,7 @@ MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask`、v2.
 
 ## 推理运行环境
 
-MaaFramework v5.14.3 使用 MaaDeps v3.0.0，并新增 WebGPU 推理后端；官方依赖包不再提供 CoreML。MaaPiCli 使用框架默认的 `Auto` 后端选择：依次尝试 CUDA、DirectML、WebGPU、CoreML，最后回退 CPU。该顺序在 Windows 上同样适用。MaaDeps v3.0.0 的官方 Windows x86_64 / aarch64 依赖包编译启用了 DirectML 和 WebGPU，未编译 CUDA；使用这些包时，`Auto` 优先选择 DirectML。macOS 和 Linux 可使用 WebGPU。
+MaaFramework v5.14.3 使用 MaaDeps v3.0.0，并新增 WebGPU 推理后端；官方依赖包不再提供 CoreML。MaaPiCli 使用框架默认的 `Auto` 后端选择：依次尝试 DirectML、WebGPU，最后回退 CPU。该顺序在 Windows 上同样适用。MaaDeps v3.0.0 的官方 Windows x86_64 / aarch64 依赖包编译启用了 DirectML 和 WebGPU；使用这些包时，`Auto` 优先选择 DirectML。macOS 和 Linux 可使用 WebGPU。
 
 部署时请保留发行包中的 ONNX Runtime、WebGPU Dawn 及其他运行库。显式选择推理后端或设备的 CLI 配置目前尚未提供。
 
