@@ -32,7 +32,7 @@ def main():
         ):
             environment.pop(variable, None)
         if sys.platform == "win32":
-            windows = Path(environment["SystemRoot"])
+            windows = Path(os.environ["SystemRoot"])
             environment["PATH"] = os.pathsep.join(
                 str(path) for path in (binary_dir, windows / "System32", windows)
             )
