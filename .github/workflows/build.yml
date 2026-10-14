@@ -273,6 +273,10 @@ jobs:
                   packaged_version="$(cat package/maafw-version.txt)"
                   test "$packaged_version" = "$RESOLVED_MAAFW_VERSION"
 
+            - name: Check packaged inference libraries
+              shell: bash
+              run: python test/package/smoke.py package --check-only
+
             - name: Test packaged runtime
               if: matrix.can-run
               shell: bash

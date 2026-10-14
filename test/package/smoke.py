@@ -1,5 +1,6 @@
 """Check the shipped runtime and launch the CLI from an isolated package copy."""
 
+import argparse
 import os
 from pathlib import Path
 import re
@@ -7,6 +8,23 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+
+RUNTIME_LOAD_SCRIPT = """
+import ctypes
+import os
+from pathlib import Path
+import sys
+
+directory = Path(sys.argv[1])
+dll_directory = os.add_dll_directory(str(directory)) if sys.platform == "win32" else None
+dawn = ctypes.CDLL(sys.argv[3])
+onnx = ctypes.CDLL(sys.argv[2])
+onnx.OrtGetApiBase.restype = ctypes.c_void_p
+if not onnx.OrtGetApiBase():
+    raise RuntimeError("ONNX Runtime returned a null API base")
+print("Packaged ONNX Runtime and WebGPU Dawn loaded successfully")
+"""
 
 
 def runtime_libraries(binary_dir):
@@ -33,8 +51,14 @@ def runtime_libraries(binary_dir):
 
 
 def main():
-    package = Path(sys.argv[1]).resolve()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("package", type=Path)
+    parser.add_argument("--check-only", action="store_true")
+    args = parser.parse_args()
+    package = args.package.resolve()
     runtime_libraries(package / "bin")
+    if args.check_only:
+        return
 
     fixture = Path(__file__).resolve().parents[1] / "cli/fixtures/eof/interface.json"
     with tempfile.TemporaryDirectory(prefix="maapicli-package-") as directory:
@@ -57,6 +81,16 @@ def main():
             environment["PATH"] = os.pathsep.join(
                 str(path) for path in (binary_dir, windows / "System32", windows)
             )
+
+        libraries = runtime_libraries(binary_dir)
+        subprocess.run(
+            [sys.executable, "-c", RUNTIME_LOAD_SCRIPT, str(binary_dir),
+             *(str(path) for path in libraries)],
+            cwd=directory,
+            env=environment,
+            check=True,
+            timeout=30,
+        )
 
         executable = "MaaPiCli.exe" if sys.platform == "win32" else "MaaPiCli"
         result = subprocess.run(

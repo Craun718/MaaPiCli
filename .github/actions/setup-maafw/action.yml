@@ -95,6 +95,9 @@ runs:
           uses: actions/setup-python@v6
           with:
               python-version: '3.9'
+              # macOS x86_64 packages run through Rosetta on arm64 runners.
+              # The runtime load probe must use a matching Python architecture.
+              architecture: ${{ runner.os == 'macOS' && (inputs.arch == 'x86_64' && 'x64' || 'arm64') || 'x64' }}
 
         - name: Cache precompiled MaaFramework
           id: cache-maafw
