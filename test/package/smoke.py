@@ -18,7 +18,9 @@ import sys
 
 directory = Path(sys.argv[1])
 dll_directory = os.add_dll_directory(str(directory)) if sys.platform == "win32" else None
+print("Loading packaged WebGPU Dawn", flush=True)
 dawn = ctypes.CDLL(sys.argv[3])
+print("Loading packaged ONNX Runtime", flush=True)
 onnx = ctypes.CDLL(sys.argv[2])
 onnx.OrtGetApiBase.restype = ctypes.c_void_p
 if not onnx.OrtGetApiBase():
@@ -86,17 +88,22 @@ def main():
         libraries = runtime_libraries(binary_dir)
         interpreter = [sys.executable]
         if sys.platform == "darwin" and args.arch:
-            # Xcode's system Python supports both architectures, unlike the
-            # hosted toolcache interpreter and its Homebrew dependencies.
+            # The macOS toolcache Python is universal2. Launch its target slice
+            # directly rather than going through the system Xcode launcher.
             architecture = "arm64" if args.arch == "aarch64" else "x86_64"
-            interpreter = ["/usr/bin/arch", f"-{architecture}", "/usr/bin/python3"]
+            subprocess.run(
+                ["/usr/bin/lipo", "-verify_arch", architecture, sys.executable],
+                check=True,
+                timeout=30,
+            )
+            interpreter = ["/usr/bin/arch", f"-{architecture}", sys.executable]
         subprocess.run(
             [*interpreter, "-c", RUNTIME_LOAD_SCRIPT, str(binary_dir),
              *(str(path) for path in libraries)],
             cwd=directory,
             env=environment,
             check=True,
-            timeout=30,
+            timeout=90,
         )
 
         executable = "MaaPiCli.exe" if sys.platform == "win32" else "MaaPiCli"
