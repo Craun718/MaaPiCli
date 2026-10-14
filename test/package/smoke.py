@@ -54,6 +54,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package", type=Path)
     parser.add_argument("--check-only", action="store_true")
+    parser.add_argument("--arch", choices=("x86_64", "aarch64"))
     args = parser.parse_args()
     package = args.package.resolve()
     runtime_libraries(package / "bin")
@@ -83,8 +84,14 @@ def main():
             )
 
         libraries = runtime_libraries(binary_dir)
+        interpreter = [sys.executable]
+        if sys.platform == "darwin" and args.arch:
+            # Xcode's system Python supports both architectures, unlike the
+            # hosted toolcache interpreter and its Homebrew dependencies.
+            architecture = "arm64" if args.arch == "aarch64" else "x86_64"
+            interpreter = ["/usr/bin/arch", f"-{architecture}", "/usr/bin/python3"]
         subprocess.run(
-            [sys.executable, "-c", RUNTIME_LOAD_SCRIPT, str(binary_dir),
+            [*interpreter, "-c", RUNTIME_LOAD_SCRIPT, str(binary_dir),
              *(str(path) for path in libraries)],
             cwd=directory,
             env=environment,

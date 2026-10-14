@@ -280,7 +280,7 @@ jobs:
             - name: Test packaged runtime
               if: matrix.can-run
               shell: bash
-              run: python test/package/smoke.py package
+              run: python test/package/smoke.py package --arch "${{ matrix.arch }}"
 
             - uses: actions/upload-artifact@v7
               with:
