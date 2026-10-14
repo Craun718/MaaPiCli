@@ -31,7 +31,10 @@ print("Packaged ONNX Runtime and WebGPU Dawn loaded successfully")
 
 def runtime_libraries(binary_dir):
     patterns = {
-        "win32": (r"onnxruntime\.dll", r"(?:lib)?webgpu_dawn\.dll"),
+        "win32": (
+            r"onnxruntime(?:_maa)?\.dll",
+            r"(?:lib)?webgpu_dawn(?:_maa)?\.dll",
+        ),
         "darwin": (
             r"libonnxruntime(?:\.[0-9]+)*\.dylib",
             r"libwebgpu_dawn(?:\.[0-9]+)*\.dylib",
