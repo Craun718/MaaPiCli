@@ -95,7 +95,7 @@ def main():
             # directly rather than going through the system Xcode launcher.
             architecture = "arm64" if args.arch == "aarch64" else "x86_64"
             subprocess.run(
-                ["/usr/bin/lipo", "-verify_arch", architecture, sys.executable],
+                ["/usr/bin/lipo", sys.executable, "-verify_arch", architecture],
                 check=True,
                 timeout=30,
             )
