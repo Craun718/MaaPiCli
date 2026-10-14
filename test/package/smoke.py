@@ -2,18 +2,39 @@
 
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 
 
+def runtime_libraries(binary_dir):
+    patterns = {
+        "win32": (r"onnxruntime\.dll", r"(?:lib)?webgpu_dawn\.dll"),
+        "darwin": (
+            r"libonnxruntime(?:\.[0-9]+)*\.dylib",
+            r"libwebgpu_dawn(?:\.[0-9]+)*\.dylib",
+        ),
+    }.get(sys.platform, (
+        r"libonnxruntime\.so(?:\.[0-9]+)*",
+        r"libwebgpu_dawn\.so(?:\.[0-9]+)*",
+    ))
+    libraries = []
+    for library, pattern in zip(("onnxruntime", "webgpu_dawn"), patterns):
+        matches = sorted(
+            path for path in binary_dir.iterdir()
+            if path.is_file() and re.fullmatch(pattern, path.name)
+        )
+        if not matches:
+            raise RuntimeError(f"Package is missing the {library} runtime")
+        libraries.append(matches[0])
+    return libraries
+
+
 def main():
     package = Path(sys.argv[1]).resolve()
-    suffix = {"win32": ".dll", "darwin": ".dylib"}.get(sys.platform, ".so")
-    for library in ("onnxruntime", "webgpu_dawn"):
-        if not any((package / "bin").glob(f"*{library}*{suffix}*")):
-            raise RuntimeError(f"Package is missing the {library} runtime")
+    runtime_libraries(package / "bin")
 
     fixture = Path(__file__).resolve().parents[1] / "cli/fixtures/eof/interface.json"
     with tempfile.TemporaryDirectory(prefix="maapicli-package-") as directory:
