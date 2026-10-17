@@ -298,6 +298,15 @@ struct InterfaceData
 
     struct Preset
     {
+        struct PresetPretask
+        {
+            std::string name;
+            bool enabled = true;
+            json::object option;
+
+            MEO_JSONIZATION(name, MEO_OPT enabled, MEO_OPT option);
+        };
+
         struct PresetTask
         {
             std::string name;
@@ -311,9 +320,10 @@ struct InterfaceData
         std::string label;
         std::string description;
         std::string icon;
+        std::optional<std::vector<PresetPretask>> pretask;
         std::vector<PresetTask> task;
 
-        MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, MEO_OPT icon, task);
+        MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, MEO_OPT icon, MEO_OPT pretask, task);
     };
 
     int interface_version = 2;

@@ -2624,6 +2624,68 @@ bool Interactor::apply_preset()
     }
     const auto& preset = presets.at(static_cast<size_t>(*selected - 1));
 
+    if (preset.pretask) {
+        if (!ensure_pretask_options()) {
+            return false;
+        }
+        std::vector<Configuration::Pretask> preset_pretasks;
+        const auto declared_pretasks = Parser::flatten_pretask(config_.interface_data().pretask);
+        const auto& current = config_.configuration().pretask;
+        for (const auto& preset_pretask : *preset.pretask) {
+            if (!preset_pretask.enabled) {
+                continue;
+            }
+            auto declared = std::ranges::find_if(declared_pretasks, [&](const auto& item) {
+                return (item.name.empty() ? item.exec : item.name) == preset_pretask.name;
+            });
+            if (declared == declared_pretasks.end()) {
+                continue;
+            }
+            if ((!declared->resource.empty()
+                 && std::ranges::find(declared->resource, config_.configuration().resource) == declared->resource.end())
+                || (!declared->controller.empty()
+                    && std::ranges::find(declared->controller, config_.configuration().controller.name) == declared->controller.end())) {
+                continue;
+            }
+            Configuration::Pretask item;
+            item.name = preset_pretask.name;
+            auto saved = std::ranges::find(current, item.name, &Configuration::Pretask::name);
+            if (saved != current.end()) {
+                item.option = saved->option;
+            }
+            for (const auto& [option_name, option_value] : preset_pretask.option) {
+                auto option = std::ranges::find(item.option, option_name, &Configuration::Option::name);
+                if (option == item.option.end()) {
+                    item.option.emplace_back();
+                    option = std::prev(item.option.end());
+                    option->name = option_name;
+                }
+                auto definition = config_.interface_data().option.find(option_name);
+                if (definition == config_.interface_data().option.end()) continue;
+                switch (definition->second.type) {
+                case InterfaceData::Option::Type::Select:
+                case InterfaceData::Option::Type::Switch:
+                    if (option_value.is_string()) option->value = option_value.as_string();
+                    break;
+                case InterfaceData::Option::Type::Checkbox:
+                    if (option_value.is_array()) {
+                        option->values.clear();
+                        for (const auto& value : option_value.as_array()) if (value.is_string()) option->values.emplace_back(value.as_string());
+                    }
+                    break;
+                case InterfaceData::Option::Type::Input:
+                    if (option_value.is_object()) {
+                        option->inputs.clear();
+                        for (const auto& [key, value] : option_value.as_object()) if (value.is_string()) option->inputs[key] = value.as_string();
+                    }
+                    break;
+                }
+            }
+            preset_pretasks.emplace_back(std::move(item));
+        }
+        config_.configuration().pretask = std::move(preset_pretasks);
+    }
+
     std::vector<Configuration::Task> preset_tasks;
     for (const auto& preset_task : preset.task) {
         if (!preset_task.enabled) {
@@ -2697,9 +2759,11 @@ bool Interactor::apply_preset()
     Configuration preset_config;
     preset_config.resource = config_.configuration().resource;
     preset_config.controller = config_.configuration().controller;
+    preset_config.pretask = config_.configuration().pretask;
     preset_config.task = std::move(preset_tasks);
     Parser::check_configuration(config_.interface_data(), preset_config);
 
+    config_.configuration().pretask = std::move(preset_config.pretask);
     config_.configuration().task = std::move(preset_config.task);
     std::string preset_display = get_display_name(preset.name, preset.label);
     std::cout << "Applied preset: " << MAA_NS::utf8_to_crt(preset_display) << "\n\n";
