@@ -714,6 +714,25 @@ bool Parser::check_configuration(const InterfaceData& data, Configuration& confi
         ++pretask_iter;
     }
 
+    if (config.enabled_pretask) {
+        const auto data_pretasks = Parser::flatten_pretask(data.pretask);
+        for (auto it = config.enabled_pretask->begin(); it != config.enabled_pretask->end();) {
+            if (std::ranges::none_of(data_pretasks, [&](const auto& pretask) { return pretask_identifier(pretask) == *it; })) {
+                LogWarn << "Enabled pretask not found in interface, removing from config" << VAR(*it);
+                it = config.enabled_pretask->erase(it);
+                erased = true;
+            }
+            else {
+                ++it;
+            }
+        }
+        auto enabled = unique_values(*config.enabled_pretask);
+        if (enabled.size() != config.enabled_pretask->size()) {
+            config.enabled_pretask = std::move(enabled);
+            erased = true;
+        }
+    }
+
     return !erased;
 }
 

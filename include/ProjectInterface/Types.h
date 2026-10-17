@@ -521,6 +521,7 @@ struct Configuration
     std::vector<Option> resource_option;            // v2.3.0
     std::vector<Option> controller_option;          // v2.3.0
     std::vector<Pretask> pretask;
+    std::optional<std::vector<std::string>> enabled_pretask; // v2.10.3: nullopt keeps legacy all-enabled behavior
     std::vector<std::string> last_welcome;          // v2.10.2; empty means no snapshot
     std::vector<std::string> last_resolved_welcome; // v2.10.2; empty means no snapshot
 
@@ -538,6 +539,7 @@ struct Configuration
         MEO_OPT resource_option,
         MEO_OPT controller_option,
         MEO_OPT pretask,
+        MEO_OPT enabled_pretask,
         MEO_OPT last_welcome,
         MEO_OPT last_resolved_welcome);
 };
