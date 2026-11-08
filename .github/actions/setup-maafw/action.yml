@@ -94,14 +94,14 @@ runs:
         - name: Setup Python
           uses: actions/setup-python@v6
           with:
-              python-version: '3.9'
+              python-version: '3.13'
 
         - name: Cache precompiled MaaFramework
           id: cache-maafw
           uses: actions/cache@v6
           with:
               path: maafw-prefix
-              key: maafw-runtime-${{ runner.os }}-${{ inputs.arch }}-${{ steps.resolve.outputs.cache-repository }}-${{ inputs.version }}
+              key: maafw-runtime-${{ runner.os }}-${{ inputs.arch }}-${{ steps.resolve.outputs.cache-repository }}-${{ inputs.version }}-complete
 
         - name: Download precompiled MaaFramework
           if: steps.cache-maafw.outputs.cache-hit != 'true'
@@ -116,6 +116,7 @@ runs:
               archive="$RUNNER_TEMP/$asset"
               curl --fail --location --retry 3 --output "$archive" \
                 "https://github.com/$REPOSITORY/releases/download/$VERSION/$asset"
+              rm -rf "$GITHUB_WORKSPACE/maafw-prefix"
               mkdir -p "$GITHUB_WORKSPACE/maafw-prefix"
               unzip -q "$archive" -d "$GITHUB_WORKSPACE/maafw-prefix"
 
@@ -124,7 +125,7 @@ runs:
           uses: actions/cache@v6
           with:
               path: MaaFramework/source/MaaUtils/MaaDeps
-              key: maadeps-${{ runner.os }}-${{ inputs.arch }}-${{ steps.resolve.outputs.cache-repository }}-${{ inputs.version }}
+              key: maadeps-${{ runner.os }}-${{ inputs.arch }}-${{ steps.resolve.outputs.cache-repository }}-${{ inputs.version }}-complete
 
         - name: Bootstrap MaaDeps
           if: steps.cache-maadeps.outputs.cache-hit != 'true'
@@ -134,7 +135,9 @@ runs:
               GITHUB_TOKEN: ${{ github.token }}
               DEPS_ARCH: ${{ steps.resolve.outputs.deps-arch }}
               DEPS_OS: ${{ steps.resolve.outputs.deps-os }}
-          run: python tools/maadeps-download.py "$DEPS_ARCH-$DEPS_OS"
+          run: |
+              rm -rf "$GITHUB_WORKSPACE/MaaFramework/source/MaaUtils/MaaDeps"
+              python tools/maadeps-download.py "$DEPS_ARCH-$DEPS_OS"
 
         - name: Checkout MaaDeps toolchain
           if: runner.os == 'Linux'
