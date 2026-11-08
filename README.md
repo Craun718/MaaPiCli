@@ -20,6 +20,19 @@ cmake -S . -B build \
 cmake --build build --config RelWithDebInfo -j 16
 ```
 
+## 贡献
+
+由 AI 编写或辅助编写的 PR，请在 PR 描述末尾注明本次实际使用的 AI 编程工具（Agent）、模型名称或版本和思考强度（reasoning effort）。多个 Agent 或模型参与时，请分别列出对应信息。
+
+```text
+AI 使用信息：
+- Agent：<AI 编程工具名称>
+- 模型：<模型名称或版本>
+- 思考强度：<思考强度>
+```
+
+AI 助手提交 PR 时还需遵循 [AGENTS.md](AGENTS.md) 中的要求。
+
 ## PI 协议支持
 
 下表列出当前支持的协议能力及其限制。Agent 通过 `PI_INTERFACE_VERSION` 声明协议扩展能力。
