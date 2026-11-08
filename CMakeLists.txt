@@ -49,7 +49,7 @@ if(LINUX)
 endif()
 
 if(WIN32)
-    target_link_libraries(MaaPiCliCore PUBLIC Crypt32)
+    target_link_libraries(MaaPiCliCore PUBLIC Crypt32 PRIVATE Advapi32 ntdll)
 elseif(APPLE)
     find_library(MaaPiCli_CoreFoundation_LIBRARY CoreFoundation REQUIRED)
     find_library(MaaPiCli_Security_LIBRARY Security REQUIRED)

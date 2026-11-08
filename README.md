@@ -20,36 +20,44 @@ cmake -S . -B build \
 cmake --build build --config RelWithDebInfo -j 16
 ```
 
-## PI 协议支持版本
+## PI 协议支持
 
-MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask`、v2.8.1 的 pretask 适用范围过滤、v2.10.0 的密码输入、v2.10.1 的 `checkbox` 数量限制和 v2.10.2 的多条 `welcome` 公告。PI 语义版本与 MaaFramework release 版本、`interface.json` 中的 `interface_version: 2` 是三套不同概念。
+下表列出当前支持的协议能力及其限制。Agent 通过 `PI_INTERFACE_VERSION` 声明协议扩展能力。
 
-`maafw-version.txt` 当前锁定的 MaaFramework `v5.13.1` 文档定义到 PI v2.10.2。下表列出协议能力，便于对照 MaaPiCli 的实际实现状态。
+| 协议能力 | MaaPiCli 状态 |
+|----------|--------------|
+| 基础协议：项目信息、controller、resource、task、select/input/switch option、多资源加载与 pipeline override | ✅ 支持 |
+| `controller.attach_resource_path` 附加资源；`import` 拆分导入 PI 片段 | ✅ 支持 |
+| `checkbox` 多选；`option.controller/resource` 适用范围；全局、resource 级、controller 级 option；多级 option；`preset`；`import` 导入 preset；`focus.display` 渠道声明 | ⚠️ 部分支持：option 与 preset 可用；`focus.display` 因未处理 focus 回调而无效 |
+| option 及其子 option 的 controller/resource 适用性过滤 | ✅ 支持 |
+| 顶层 `group` 分组声明与 `task.group`；`import` 导入 group | ✅ 支持 |
+| Agent 子进程 `PI_*` 环境变量：Client/UI 版本、语言、项目版本、当前 controller/resource 等 | ✅ 支持 |
+| `resource.hash` 资源完整性校验；校验发生在 `resource.path` 加载后、`attach_resource_path` 加载前 | ✅ 支持 |
+| `pretask` 在 Controller 启动前执行自定义程序；可把 option 当前值序列化为最后一个参数；`import` 导入 pretask | ✅ 支持 |
+| `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ⚠️ 部分支持：导入的 `global_option` 会合并并生效；`setting` 会解析与合并但不渲染；`hotkey` 未实现 |
+| `pretask.controller/resource` 适用范围过滤 | ✅ 支持 |
+| `telemetry.sentry` 匿名遥测配置：DSN、tracing、事务采样率、环境标签 | ❌ 未实现，不读取和上报遥测 |
+| `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 未实现；CLI 当前也未处理 focus 回调 |
+| `telemetry.sentry.failure_attachments_sample_rate` 失败诊断附件采样率 | ❌ 未实现 |
+| `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ✅ 支持：CLI 隐藏输入并掩码展示；Windows 使用 DPAPI、macOS 使用 Keychain、Linux 使用 AES-GCM 加密配置；pretask 与 pipeline 使用内存明文 |
+| `checkbox` 的 `min_count` / `max_count`，限制可选和必选数量 | ✅ 支持：解析配置约束，在交互中阻止超出上限；已保存数量不足时要求补选，数量超限时清理选择 |
+| `welcome` 支持非空字符串数组，按声明顺序展示多条公告，完整顺序或内容更新后重新展示 | ✅ 支持：兼容旧字符串写法；持久化公告声明与解析后的内容快照 |
+| `preset.pretask` 设置预任务勾选状态与选项值 | ✅ 支持：预设声明时按其列表重设勾选项与配置值；未声明时保留现有预任务设置 |
+| `preset.controller` 限制预设适用的控制器 | ✅ 支持：隐藏不适用于当前控制器的预设；未声明或空列表时不限制 |
+| `input.inputs[].input_type` 指定 `text` / `file` / `directory` 编辑控件 | ⚠️ 降级支持：文件和目录显示路径提示，使用文本输入；保留默认值、正则校验和 `pipeline_type` 转换，不要求路径存在，不做分隔符转换或 `~` 展开 |
+| `PI_USER_DATA_DIR` 指定 Client 与 Agent 共用的用户数据目录 | ✅ 支持：向每个 Agent 传入加载配置时确定的用户数据目录绝对路径；与 Agent 的资源工作目录分别处理 |
 
-| PI 版本 | 协议新增/变更 | MaaPiCli 状态 |
-|---------|----------------|--------------|
-| v2.1.0 | 基础协议：项目信息、controller、resource、task、select/input/switch option、多资源加载与 pipeline override | ✅ 支持 |
-| v2.2.0 | `controller.attach_resource_path` 附加资源；`import` 拆分导入 PI 片段 | ✅ 支持 |
-| v2.3.0 | `checkbox` 多选；`option.controller/resource` 适用范围；全局、resource 级、controller 级 option；多级 option；`preset`；`import` 导入 preset；`focus.display` 渠道声明 | ⚠️ 部分支持：option 与 preset 可用；`focus.display` 因未处理 focus 回调而无效 |
-| v2.3.1 | 明确 option 及其子 option 的 controller/resource 适用性过滤 | ✅ 支持 |
-| v2.4.0 | 顶层 `group` 分组声明与 `task.group`；`import` 导入 group | ✅ 支持 |
-| v2.5.0 | Agent 子进程 `PI_*` 环境变量：Client/UI 版本、语言、项目版本、当前 controller/resource 等 | ✅ 支持 |
-| v2.6.0 | `resource.hash` 资源完整性校验；校验发生在 `resource.path` 加载后、`attach_resource_path` 加载前 | ✅ 支持 |
-| v2.7.0 | `pretask` 在 Controller 启动前执行自定义程序；可把 option 当前值序列化为最后一个参数；`import` 导入 pretask | ✅ 支持 |
-| v2.8.0 | `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ⚠️ 部分支持：导入的 `global_option` 会合并并生效；`setting` 会解析与合并但不渲染；`hotkey` 未实现 |
-| v2.8.1 | `pretask.controller/resource` 适用范围过滤 | ✅ 支持 |
-| v2.9.0 | `telemetry.sentry` 匿名遥测配置：DSN、tracing、事务采样率、环境标签 | ❌ 未实现，不读取和上报遥测 |
-| v2.9.1 | `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 未实现；CLI 当前也未处理 focus 回调 |
-| v2.9.2 | `telemetry.sentry.failure_attachments_sample_rate` 失败诊断附件采样率 | ❌ 未实现 |
-| v2.10.0 | `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ✅ 支持：CLI 隐藏输入并掩码展示；Windows 使用 DPAPI、macOS 使用 Keychain、Linux 使用 AES-GCM 加密配置；pretask 与 pipeline 使用内存明文 |
-| v2.10.1 | `checkbox` 新增 `min_count` / `max_count`，限制可选和必选数量 | ✅ 支持：解析配置约束，在交互中阻止超出上限；已保存数量不足时要求补选，数量超限时清理选择 |
-| v2.10.2 | `welcome` 新增非空字符串数组，按声明顺序展示多条公告，完整顺序或内容更新后重新展示 | ✅ 支持：兼容旧字符串写法；持久化公告声明与解析后的内容快照 |
+包含尚未支持字段的配置通常仍可被解析并加载其既有功能；具体支持情况见上表。使用 `hotkey` option 的项目可能无法得到预期交互，应优先为 CLI 提供其他 option 类型。
 
-由于 `interface_version` 仍为 `2`，包含 v2.6.0 及以后新增字段的配置通常仍可被解析并加载其既有功能；但这些新增字段不会被 MaaPiCli 启用。使用 `hotkey` option 的项目可能无法得到预期交互，应优先为 CLI 提供其他 option 类型。
+## 推理运行环境
+
+MaaFramework 支持 WebGPU 推理后端；官方依赖包不再提供 CoreML。MaaPiCli 使用框架默认的 `Auto` 后端选择：依次尝试 DirectML、WebGPU，最后回退 CPU。该顺序在 Windows 上同样适用。官方 MaaDeps Windows x86_64 / aarch64 依赖包编译启用了 DirectML 和 WebGPU；使用这些包时，`Auto` 优先选择 DirectML。macOS 和 Linux 可使用 WebGPU。
+
+部署时请保留发行包中的 ONNX Runtime、WebGPU Dawn 及其他运行库。显式选择推理后端或设备的 CLI 配置目前尚未提供。
 
 ## Linux 控制器
 
-MaaFramework v5.13.0 新增 Linux 控制器。MaaPiCli 支持解析 ProjectInterface V2 的 `controller.linux` 配置，创建 `MaaLinuxControllerCreate` 控制器，并支持 `controller.display_expand` 截图缩放。
+MaaPiCli 支持解析 ProjectInterface 的 `controller.linux` 配置，创建 `MaaLinuxControllerCreate` 控制器，并支持 `controller.display_expand` 截图缩放。
 
 CLI 可组合以下 Linux 截图和输入方式：
 
@@ -59,7 +67,7 @@ CLI 可组合以下 Linux 截图和输入方式：
 | 截图 | `PipeWire` | `pipewire_source: Gamescope` 自动发现 gamescope 节点；`Portal` 通过 xdg-desktop-portal 打开 ScreenCast 流 |
 | 输入 | `Wlr` | 需要 wlroots 虚拟键盘和虚拟指针协议，会提示输入 Wayland socket |
 | 输入 | `UInput` | 需要访问 `/dev/uinput`，会提示输入绝对坐标范围的宽度和高度 |
-| 输入 | `Libei` | 需要 EIS socket，会提示输入其路径；文本输入建议系统 libei >= 1.6.0 |
+| 输入 | `Libei` | 需要 EIS socket，会提示输入其路径；文本输入需要系统 libei 支持文本输入 |
 
 `controller.linux.use_win32_vk_code` 可把 Win32 Virtual-Key 键码转换为 Linux evdev 键码。Linux 运行环境仍需按 MaaFramework 文档准备 Wayland、PipeWire、Portal、libei 或 uinput 相关权限和服务。
 
@@ -87,6 +95,7 @@ CLI 可组合以下 Linux 截图和输入方式：
 | task 禁用态显示 | 不满足 resource/controller 约束的 task 灰显 | 直接过滤不显示 |
 | option 禁用态显示 | 不满足约束的 option 灰显 | 直接跳过不提示 |
 | `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
+| `input_type: file/directory` | 系统文件/目录选择对话框及可编辑路径 | 终端文本输入并显示路径提示，路径字符串原样保存与传递 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |
 
 ## 用法

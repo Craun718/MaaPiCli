@@ -1,7 +1,9 @@
 #include "ProjectInterface/Parser.h"
 
+#include <exception>
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -53,6 +55,43 @@ int main()
     using namespace MAA_PROJECT_INTERFACE_NS;
 
     const std::filesystem::path fixture_dir = MAAPICLI_TEST_FIXTURE_DIR;
+    {
+        // Configuration saves must preserve the difference between legacy defaults,
+        // explicitly disabling all pretasks, and selecting named pretasks.
+        const std::vector<std::optional<std::vector<std::string>>> selections {
+            std::nullopt,
+            std::vector<std::string> { },
+            std::vector<std::string> { "prepare" },
+        };
+        for (const auto& selection : selections) {
+            Configuration config;
+            config.enabled_pretask = selection;
+            const auto serialized = json::parse(config.to_json().dumps());
+            require(serialized.has_value(), "serialized configuration should be valid JSON");
+            if (!serialized) {
+                continue;
+            }
+            try {
+                const auto restored = Parser::parse_config(*serialized);
+                require(restored.has_value(), "pretask selections should survive configuration serialization");
+                if (restored) {
+                    require(restored->enabled_pretask == selection, "configuration round-trip should preserve pretask selection state");
+                }
+            }
+            catch (const std::exception& error) {
+                require(false, std::string("configuration round-trip should not throw: ") + error.what());
+            }
+        }
+
+        auto legacy = Configuration().to_json();
+        legacy.erase("enabled_pretask");
+        const auto restored_legacy = Parser::parse_config(legacy);
+        require(restored_legacy && !restored_legacy->enabled_pretask, "legacy configurations should keep all pretasks enabled");
+
+        auto invalid = legacy;
+        invalid["enabled_pretask"] = "prepare";
+        require(!Parser::parse_config(invalid), "a non-array pretask selection should be rejected");
+    }
     {
         InterfaceData data;
         data.interface_version = 2;
@@ -344,6 +383,9 @@ int main()
     require(
         !Parser::parse_interface(fixture_dir / "invalid_option_defaults.json").has_value(),
         "invalid or unknown checkbox defaults should be rejected");
+    require(
+        !Parser::parse_interface(fixture_dir / "invalid_hotkey.json").has_value(),
+        "a hotkey option in an import should be rejected as an unsupported option type");
 
     auto zero_max_json = json::parse(
         R"json({
@@ -364,6 +406,25 @@ int main()
         zero_max_json && Parser::parse_interface(*zero_max_json).has_value(),
         "max_count zero should accept an empty checkbox selection");
 
+    auto interception_keyboard_json = json::parse(
+        R"json({
+            "interface_version": 2,
+            "controller": [{
+                "name": "win32-controller",
+                "type": "Win32",
+                "win32": {
+                    "keyboard": "Interception"
+                }
+            }],
+            "resource": [{ "name": "default-resource", "path": ["resource"] }]
+        })json");
+    require(interception_keyboard_json.has_value(), "Interception keyboard fixture should parse as JSON");
+    auto interception_keyboard = interception_keyboard_json ? Parser::parse_interface(*interception_keyboard_json) : std::nullopt;
+    require(interception_keyboard.has_value(), "the v5.14.0 Win32 keyboard method should parse");
+    require(
+        interception_keyboard && interception_keyboard->controller.front().win32.keyboard == "Interception",
+        "the Interception keyboard method should be preserved");
+
     {
         auto single_welcome_json = json::parse(
             R"json({
@@ -378,6 +439,20 @@ int main()
         require(
             single_welcome && Parser::welcome_items(single_welcome->welcome) == std::vector<std::string> { "welcome" },
             "a legacy string welcome should flatten to one ordered item");
+
+        auto empty_welcome_string_json = json::parse(
+            R"json({
+                "interface_version": 2,
+                "controller": [{ "name": "default-controller", "type": "Adb" }],
+                "resource": [{ "name": "default-resource", "path": ["resource"] }],
+                "welcome": ""
+            })json");
+        require(empty_welcome_string_json.has_value(), "empty legacy welcome fixture should parse as JSON");
+        auto empty_welcome_string = empty_welcome_string_json ? Parser::parse_interface(*empty_welcome_string_json) : std::nullopt;
+        require(empty_welcome_string.has_value(), "an empty legacy string welcome should parse");
+        require(
+            empty_welcome_string && Parser::welcome_items(empty_welcome_string->welcome).empty(),
+            "an empty legacy string welcome should flatten to no items");
 
         auto multiple_welcome_json = json::parse(
             R"json({
@@ -616,7 +691,18 @@ int main()
                 && welcome_config->last_resolved_welcome == std::vector<std::string> { "First", "Second" },
             "welcome snapshots should retain order");
         auto roundtrip = welcome_config->to_json();
-        require(roundtrip.contains("last_welcome") && roundtrip.contains("last_resolved_welcome"), "welcome snapshots should serialize");
+        const auto serialized_items = [](const json::value& value) {
+            std::vector<std::string> items;
+            for (const auto& item : value.as_array()) {
+                items.push_back(item.as_string());
+            }
+            return items;
+        };
+        require(
+            roundtrip.contains("last_welcome") && roundtrip.contains("last_resolved_welcome")
+                && serialized_items(roundtrip["last_welcome"]) == std::vector<std::string> { "first", "second" }
+                && serialized_items(roundtrip["last_resolved_welcome"]) == std::vector<std::string> { "First", "Second" },
+            "ordered welcome snapshots should serialize exactly");
     }
 
     auto linux_config_json = json::parse(
