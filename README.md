@@ -24,7 +24,7 @@ cmake --build build --config RelWithDebInfo -j 16
 
 MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask`、v2.8.1 的 pretask 适用范围过滤、v2.10.0 的密码输入、v2.10.1 的 `checkbox` 数量限制、v2.10.2 的多条 `welcome` 公告、v2.10.3 的预设 pretask 配置、v2.10.4 的预设控制器过滤和 v2.11.0 的用户数据目录环境变量；v2.10.5 的文件/目录输入使用终端文本输入降级。PI 语义版本与 MaaFramework release 版本、`interface.json` 中的 `interface_version: 2` 是三套不同概念。
 
-`maafw-version.txt` 当前锁定的 MaaFramework `v5.15.0-beta.1` 文档定义到 PI v2.10.3，同时适配了 [MaaFramework 主分支的 PI v2.11.0 协议](https://github.com/MaaXYZ/MaaFramework/blob/main/docs/zh_cn/3.3-ProjectInterfaceV2协议.md) 中适合 CLI 的扩展。Agent 的 `PI_INTERFACE_VERSION` 声明为 `v2.11.0`，具体功能范围以下表为准；这些扩展不需要升级 MaaFramework runtime。
+`maafw-version.txt` 当前锁定的 MaaFramework `v5.15.0` 文档定义到 PI v2.11.0，MaaPiCli 支持其中适合 CLI 的扩展。Agent 的 `PI_INTERFACE_VERSION` 声明为 `v2.11.0`，具体功能范围以下表为准；
 
 | PI 版本 | 协议新增/变更 | MaaPiCli 状态 |
 |---------|----------------|--------------|
@@ -53,7 +53,7 @@ MaaPiCli 以 PI v2.6.0 为基线，额外支持 v2.7.0 引入的 `pretask`、v2.
 
 ## 推理运行环境
 
-MaaFramework v5.15.0-beta.1 使用 MaaDeps v3.0.0，并支持 WebGPU 推理后端；官方依赖包不再提供 CoreML。MaaPiCli 使用框架默认的 `Auto` 后端选择：依次尝试 DirectML、WebGPU，最后回退 CPU。该顺序在 Windows 上同样适用。MaaDeps v3.0.0 的官方 Windows x86_64 / aarch64 依赖包编译启用了 DirectML 和 WebGPU；使用这些包时，`Auto` 优先选择 DirectML。macOS 和 Linux 可使用 WebGPU。
+MaaFramework v5.15.0 使用 MaaDeps v3.0.0，并支持 WebGPU 推理后端；官方依赖包不再提供 CoreML。MaaPiCli 使用框架默认的 `Auto` 后端选择：依次尝试 DirectML、WebGPU，最后回退 CPU。该顺序在 Windows 上同样适用。MaaDeps v3.0.0 的官方 Windows x86_64 / aarch64 依赖包编译启用了 DirectML 和 WebGPU；使用这些包时，`Auto` 优先选择 DirectML。macOS 和 Linux 可使用 WebGPU。
 
 部署时请保留发行包中的 ONNX Runtime、WebGPU Dawn 及其他运行库。显式选择推理后端或设备的 CLI 配置目前尚未提供。
 
