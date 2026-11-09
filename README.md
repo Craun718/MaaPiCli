@@ -4,16 +4,32 @@ MaaFramework 官方提供的命令行 ProjectInterface Client，用于通过终�
 
 ## 获取
 
-从 MaaFramework Release 下载对应平台的 `MAA-MaaPiCli-<os>-<arch>` 独立包。`MaaPiCli` 不再包含在 `MAA-*` 主包中。
+从 [MaaPiCli Releases](https://github.com/MaaXYZ/MaaPiCli/releases) 下载对应平台的 `MAA-MaaPiCli-<os>-<arch>-<version>.zip`。
+
+## 快速开始
+
+将 MaaPiCli 及其运行库放入包含 `interface.json` 的项目目录，然后在终端启动：
+
+```bash
+# 首次运行：交互式配置并运行任务
+./MaaPiCli
+
+# 使用已保存的配置直接运行
+./MaaPiCli -d
+```
+
+Windows 下使用 `MaaPiCli.exe`。程序以 MaaFramework 运行库所在目录作为项目资源和用户数据目录，而不是以终端当前工作目录为准；通常该目录也是可执行文件所在的项目目录。用户配置保存在该目录下的 `config/maa_pi_config.json`。首次使用时请先通过交互模式完成配置，再使用 `-d`。
 
 ## 本地编译
 
 仓库根目录的 `maafw-version.txt` 锁定本版本 MaaPiCli 使用的 MaaFramework release tag。fork、历史 tag 或 release 包中都带有这个文件，可以直接确认应使用的 runtime 版本。
 
-编译前先读取该文件，并从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载同名版本的 `MAA-<os>-<arch>-<version>.zip`。解压后把该目录传入 `CMAKE_PREFIX_PATH`，同时按平台安装 Boost 与 OpenCV 的开发配置。Linux 还需要安装 `libssl-dev` 或发行版等价的 OpenSSL 开发包。
+编译需要 CMake 3.28 或更新版本、支持 C++20 的编译器，以及 Boost（system、regex）和 OpenCV（core、imgproc、imgcodecs）的开发包。Linux 还需要安装 `libssl-dev` 或发行版等价的 OpenSSL 开发包。
+
+先查看 `maafw-version.txt`，从 [MaaFramework Releases](https://github.com/MaaXYZ/MaaFramework/releases) 下载对应版本的 `MAA-<os>-<arch>-<version>.zip`。解压后将其目录和其他依赖的安装前缀传入 `CMAKE_PREFIX_PATH`：
 
 ```bash
-maafw_version="$(cat maafw-version.txt)"
+cat maafw-version.txt
 cmake -S . -B build \
   -DCMAKE_PREFIX_PATH="/path/to/maafw-prefix;/path/to/dependency-prefix" \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -32,6 +48,17 @@ AI 使用信息：
 ```
 
 AI 助手提交 PR 时还需遵循 [AGENTS.md](AGENTS.md) 中的要求。
+
+如需构建并运行测试，可在配置时开启测试选项：
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_PREFIX_PATH="/path/to/maafw-prefix;/path/to/dependency-prefix" \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+  -DMaaPiCli_BUILD_TESTS=ON
+cmake --build build --config RelWithDebInfo -j 16
+ctest --test-dir build -C RelWithDebInfo --output-on-failure
+```
 
 ## PI 协议支持
 
@@ -110,16 +137,3 @@ CLI 可组合以下 Linux 截图和输入方式：
 | `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
 | `input_type: file/directory` | 系统文件/目录选择对话框及可编辑路径 | 终端文本输入并显示路径提示，路径字符串原样保存与传递 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |
-
-## 用法
-
-```bash
-# 交互模式
-./MaaPiCli
-
-# 直接运行（使用已保存的配置）
-./MaaPiCli -d
-```
-
-工作目录应为包含 `interface.json` 的项目根目录（即 MaaPiCli 可执行文件所在目录）。  
-用户配置保存在 `config/maa_pi_config.json`。
