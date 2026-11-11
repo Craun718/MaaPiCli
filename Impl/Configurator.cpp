@@ -2163,11 +2163,29 @@ void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
                     continue;
                 }
 
+                // Referenced modifier placeholders must exist in the configured combo, otherwise
+                // the placeholder would reach the pipeline as a literal string.
+                const auto placeholder_referenced = [&](std::string_view suffix) {
+                    return override_str.find("{" + hotkey_def.name + std::string(suffix) + "}") != std::string::npos;
+                };
+                bool modifier_missing = false;
+                for (size_t m = parts->modifiers.size(); m < 2; ++m) {
+                    if (placeholder_referenced(m == 0 ? ".modifier1" : ".modifier2")) {
+                        modifier_missing = true;
+                    }
+                }
+                if (modifier_missing) {
+                    LogWarn << "Combo has fewer modifiers than the override references, skip placeholder replacement"
+                            << VAR(config_option.name) << VAR(hotkey_def.name) << VAR(combo);
+                    continue;
+                }
+
                 // v2.8.0: hotkey placeholders are replaced with a single integer key code.
                 auto replace_with_code = [&](std::string_view placeholder, int code) {
                     const std::string value = std::to_string(code);
-                    MaaNS::string_replace_all(override_str, std::string("\"{") + std::string(placeholder) + "}\"", value);
-                    MaaNS::string_replace_all(override_str, std::string("{") + std::string(placeholder) + "}", value);
+                    override_str =
+                        MaaNS::string_replace_all(override_str, std::string("\"{") + std::string(placeholder) + "}\"", value);
+                    override_str = MaaNS::string_replace_all(override_str, std::string("{") + std::string(placeholder) + "}", value);
                 };
 
                 const std::string name = hotkey_def.name;
