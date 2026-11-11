@@ -99,6 +99,56 @@ int main()
     require(
         MaaPiCliTerminal::sanitize("第一行\n\t\x1b[31m第二行\x1b[0m\r\b", true) == "第一行\n\t第二行",
         "multiline focus messages should retain line breaks and tabs while removing controls");
+    for (unsigned int control = 0x80; control <= 0x9f; ++control) {
+        const std::string encoded { static_cast<char>(0xc2), static_cast<char>(control) };
+        require(MaaPiCliTerminal::sanitize(encoded).empty(), "all Unicode C1 controls should be removed from single-line fields");
+        require(MaaPiCliTerminal::sanitize(encoded, true).empty(), "all Unicode C1 controls should be removed from multiline messages");
+    }
+    require(
+        MaaPiCliTerminal::sanitize(
+            "A\xc2\x9b"
+            "2JB")
+            == "AB",
+        "Unicode CSI should be removed with its command payload");
+    require(
+        MaaPiCliTerminal::sanitize(
+            "\xc2\x9d"
+            "52;c;secret\xc2\x9c"
+            "A")
+            == "A",
+        "Unicode OSC and ST should remove clipboard payloads");
+    require(
+        MaaPiCliTerminal::sanitize(
+            "\x1b]title\xc2\x9c"
+            "A")
+            == "A",
+        "ESC OSC should accept a Unicode ST terminator");
+    require(
+        MaaPiCliTerminal::sanitize(
+            "\xc2\x9d"
+            "title\x1b\\A")
+            == "A",
+        "Unicode OSC should accept an ESC ST terminator");
+    require(
+        MaaPiCliTerminal::sanitize(
+            "A\xc2\x85"
+            "B\n\tC",
+            true)
+            == "AB\n\tC",
+        "C1 removal should retain allowed ASCII formatting");
+    require(MaaPiCliTerminal::sanitize("界面🙂é") == "界面🙂é", "UTF-8 continuation bytes in the C1 range must remain intact");
+    require(
+        MaaPiCliTerminal::sanitize(
+            "A\x9b"
+            "B")
+            == "AB",
+        "standalone invalid C1 bytes should not reach the terminal");
+    require(
+        MaaPiCliTerminal::sanitize(
+            "A\xe0\x82\x9b"
+            "B")
+            == "AB",
+        "overlong UTF-8 controls should not reach the terminal");
     for (bool pretask : { false, true }) {
         check_preset(pretask, json::object { { "combo", "control+e" } }, "Ctrl+E", true);
         check_preset(pretask, json::object { { "combo", "NoSuchKey" } }, "Ctrl+E", false);
