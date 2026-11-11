@@ -1,5 +1,6 @@
 #include "ProjectInterface/Runner.h"
 
+#include <algorithm>
 #include <format>
 #include <iostream>
 #include <memory>
@@ -93,8 +94,19 @@ void MAA_CALL on_tasker_event(void* /*view*/, const char* message, const char* d
                 continue;
             }
             std::string text = value.is_string() ? value.as_string() : value.dumps();
-            MaaNS::string_replace_all(content, "{" + key + "}", text);
+            content = MaaNS::string_replace_all(content, "{" + key + "}", text);
         }
+    }
+
+    // Strip terminal control sequences: focus content comes from project
+    // resources and must not be able to manipulate the terminal or spoof CLI
+    // output via escape sequences.
+    const auto sanitize = [](std::string& text) {
+        text.erase(std::remove_if(text.begin(), text.end(), [](unsigned char c) { return c == 0x1b || c < 0x20; }), text.end());
+    };
+    sanitize(content);
+    for (auto& channel : display_channels) {
+        sanitize(channel);
     }
 
     for (const auto& channel : display_channels) {
