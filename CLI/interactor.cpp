@@ -21,6 +21,7 @@
 #endif
 
 #include "HotkeyMap.h"
+#include "TerminalText.h"
 #include "MaaFramework/Utility/MaaBuffer.h"
 #include "MaaToolkit/AdbDevice/MaaToolkitAdbDevice.h"
 #include "MaaToolkit/DesktopWindow/MaaToolkitDesktopWindow.h"
@@ -445,7 +446,8 @@ void Interactor::print_config()
             else if (!opt.hotkeys.empty()) {
                 std::cout << "\t" << MAA_NS::utf8_to_crt(opt.name) << ":\n";
                 for (const auto& [key, val] : opt.hotkeys) {
-                    std::cout << "\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(val) << "\n";
+                    std::cout << "\t\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(key)) << ": "
+                              << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(val)) << "\n";
                 }
             }
         }
@@ -2091,10 +2093,14 @@ bool Interactor::process_option(
     case InterfaceData::Option::Type::Hotkey: {
         const auto keycode_set = MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration());
 
-        std::cout << MAA_NS::utf8_to_crt(std::format("\n\n## Hotkey option \"{}\" for \"{}\" ##\n\n", opt_display_name, task_display_name));
+        std::cout << MAA_NS::utf8_to_crt(
+            std::format(
+                "\n\n## Hotkey option \"{}\" for \"{}\" ##\n\n",
+                MaaPiCliTerminal::sanitize(opt_display_name),
+                MaaPiCliTerminal::sanitize(task_display_name)));
         if (!opt.description.empty()) {
             std::string desc_text = read_text_content(opt.description);
-            std::cout << MAA_NS::utf8_to_crt(desc_text) << "\n\n";
+            std::cout << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(desc_text, true)) << "\n\n";
         }
 
         for (const auto& hotkey_def : opt.hotkeys) {
@@ -2111,10 +2117,13 @@ bool Interactor::process_option(
             std::string hotkey_display_name = get_display_name(hotkey_def.name, hotkey_def.label);
             if (!hotkey_def.description.empty()) {
                 std::string hotkey_desc = read_text_content(hotkey_def.description);
-                std::cout << MAA_NS::utf8_to_crt(hotkey_desc) << "\n";
+                std::cout << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(hotkey_desc, true)) << "\n";
             }
             std::cout << MAA_NS::utf8_to_crt(
-                std::format("{} [{}] (e.g. Ctrl+Alt+F1, press Enter to keep): ", hotkey_display_name, hotkey_def.default_));
+                std::format(
+                    "{} [{}] (e.g. Ctrl+Alt+F1, press Enter to keep): ",
+                    MaaPiCliTerminal::sanitize(hotkey_display_name),
+                    MaaPiCliTerminal::sanitize(hotkey_def.default_)));
 
             auto buffer = read_line();
             if (!buffer) {
@@ -2130,7 +2139,7 @@ bool Interactor::process_option(
                     value = parts->canonical;
                     break;
                 }
-                std::cout << MAA_NS::utf8_to_crt(std::format("Invalid hotkey \"{}\", please retry: ", value));
+                std::cout << MAA_NS::utf8_to_crt(std::format("Invalid hotkey \"{}\", please retry: ", MaaPiCliTerminal::sanitize(value)));
                 buffer = read_line();
                 if (!buffer) {
                     input_aborted_ = true;
@@ -2292,7 +2301,8 @@ void Interactor::print_config_tasks(bool with_index) const
             else if (!opt.hotkeys.empty()) {
                 std::cout << "\t\t- " << MAA_NS::utf8_to_crt(opt.name) << ":\n";
                 for (const auto& [key, val] : opt.hotkeys) {
-                    std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(val) << "\n";
+                    std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(key)) << ": "
+                              << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(val)) << "\n";
                 }
             }
         }

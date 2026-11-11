@@ -1,4 +1,5 @@
 #include "CLI/interactor.h"
+#include "Impl/TerminalText.h"
 #include "ProjectInterface/Parser.h"
 
 #include <chrono>
@@ -10,6 +11,7 @@
 namespace
 {
 int failures = 0;
+
 void require(bool condition, const char* message)
 {
     if (!condition) {
@@ -22,7 +24,7 @@ void check_preset(bool pretask, const json::value& value, const std::string& def
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
     const auto root = std::filesystem::temp_directory_path()
-        / ("maapicli-hotkey-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+                      / ("maapicli-hotkey-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     std::filesystem::create_directories(root / "user/config");
     auto interface = *json::parse(R"({
         "interface_version": 2,
@@ -73,7 +75,9 @@ void check_preset(bool pretask, const json::value& value, const std::string& def
         require(options.size() == 1 && options.front().hotkeys.at("combo") == "Ctrl+E", "preset strings should be canonicalized");
     }
     if (saved && !accepted) {
-        require(saved->task.size() == 1 && saved->task.front().name == "original" && saved->pretask.empty(), "invalid presets must preserve the existing configuration");
+        require(
+            saved->task.size() == 1 && saved->task.front().name == "original" && saved->pretask.empty(),
+            "invalid presets must preserve the existing configuration");
     }
     std::filesystem::remove_all(root);
 }
@@ -81,6 +85,11 @@ void check_preset(bool pretask, const json::value& value, const std::string& def
 
 int main()
 {
+    require(MaaPiCliTerminal::sanitize("Ctrl+\x1b[2JA") == "Ctrl+A", "CSI controls should be removed with their payload");
+    require(MaaPiCliTerminal::sanitize("\x1b]52;c;secret\aA") == "A", "OSC clipboard commands should be removed");
+    require(MaaPiCliTerminal::sanitize("\x1b]title\x1b\\A") == "A", "ST-terminated OSC should be removed");
+    require(MaaPiCliTerminal::sanitize("A\n\tB\r\b") == "AB", "single-line hotkey text should not inject formatting");
+    require(MaaPiCliTerminal::sanitize("快捷键") == "快捷键", "UTF-8 text should be preserved");
     for (bool pretask : { false, true }) {
         check_preset(pretask, json::object { { "combo", "control+e" } }, "Ctrl+E", true);
         check_preset(pretask, json::object { { "combo", "NoSuchKey" } }, "Ctrl+E", false);
