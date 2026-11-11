@@ -131,6 +131,12 @@ int main()
                     "documented dotted placeholders and the base placeholder should become integer keycodes");
             }
         }
+        selected.task.front().option.front().hotkeys["combo"] = "NoSuchKey";
+        require(!hotkey_config.generate_runtime(), "an invalid saved combo must prevent runtime generation");
+        selected.task.front().option.clear();
+        selected.global_option = { shortcut };
+        selected.global_option.front().hotkeys["combo"] = "NoSuchKey";
+        require(!hotkey_config.generate_runtime(), "invalid global hotkeys must also prevent runtime generation");
     }
 
 #if !defined(_WIN32)

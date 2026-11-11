@@ -1728,8 +1728,8 @@ std::optional<RuntimeParam> Configurator::generate_runtime() const
 
         auto task_opt = generate_runtime_task(config_task);
         if (!task_opt) {
-            LogWarn << "failed to generate runtime, ignore" << VAR(config_task.name);
-            continue;
+            LogError << "Failed to generate runtime task" << VAR(config_task.name);
+            return std::nullopt;
         }
         runtime.task.emplace_back(*std::move(task_opt));
     }
@@ -2048,7 +2048,7 @@ bool Configurator::is_task_applicable(const InterfaceData::Task& task) const
     return true;
 }
 
-void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, const std::vector<Configuration::Option>& config_options) const
+bool Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, const std::vector<Configuration::Option>& config_options) const
 {
     for (const auto& config_option : config_options) {
         auto data_option_iter = data_.option.find(config_option.name);
@@ -2158,9 +2158,9 @@ void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
 
                 auto parts = MaaPiCliHotkey::parse(combo, keycode_set);
                 if (!parts) {
-                    LogWarn << "Unresolvable hotkey combo, skip placeholder replacement" << VAR(config_option.name) << VAR(hotkey_def.name)
+                    LogError << "Unresolvable hotkey combo" << VAR(config_option.name) << VAR(hotkey_def.name)
                             << VAR(combo);
-                    continue;
+                    return false;
                 }
 
                 // Referenced modifier placeholders must exist in the configured combo, otherwise
@@ -2201,11 +2201,13 @@ void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
                 runtime_task.pipeline_override.emplace(parsed->as_object());
             }
             else {
-                LogWarn << "Failed to parse pipeline override JSON for hotkey option" << VAR(config_option.name);
+                LogError << "Failed to parse pipeline override JSON for hotkey option" << VAR(config_option.name);
+                return false;
             }
         } break;
         }
     }
+    return true;
 }
 
 std::optional<RuntimeParam::Task> Configurator::generate_runtime_task(const Configuration::Task& config_task) const
@@ -2221,15 +2223,13 @@ std::optional<RuntimeParam::Task> Configurator::generate_runtime_task(const Conf
                                       .entry = data_task.entry,
                                       .pipeline_override = json::array { data_task.pipeline_override } };
 
-    // v2.3.0: merge in priority order (later overrides earlier)
-    // 1. global_option (lowest priority)
-    merge_option_overrides(runtime_task, config_.global_option);
-    // 2. resource.option
-    merge_option_overrides(runtime_task, config_.resource_option);
-    // 3. controller.option
-    merge_option_overrides(runtime_task, config_.controller_option);
-    // 4. task.option (highest priority)
-    merge_option_overrides(runtime_task, config_task.option);
+    // v2.3.0: merge in priority order (later overrides earlier).
+    if (!merge_option_overrides(runtime_task, config_.global_option)
+        || !merge_option_overrides(runtime_task, config_.resource_option)
+        || !merge_option_overrides(runtime_task, config_.controller_option)
+        || !merge_option_overrides(runtime_task, config_task.option)) {
+        return std::nullopt;
+    }
 
     return runtime_task;
 }
