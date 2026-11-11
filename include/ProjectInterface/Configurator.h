@@ -46,7 +46,7 @@ private:
 
     bool is_option_applicable(const InterfaceData::Option& opt) const;
     bool is_task_applicable(const InterfaceData::Task& task) const;
-    void merge_option_overrides(RuntimeParam::Task& runtime_task, const std::vector<Configuration::Option>& config_options) const;
+    bool merge_option_overrides(RuntimeParam::Task& runtime_task, const std::vector<Configuration::Option>& config_options) const;
     bool append_pretask_option(
         const std::string& option_name,
         const Configuration::Pretask& config_pretask,

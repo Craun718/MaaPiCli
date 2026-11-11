@@ -110,6 +110,40 @@ int main()
         }
     }
 
+    {
+        Configurator hotkey_config;
+        require(hotkey_config.load(fixture_dir / "hotkey_runtime", fixture_dir / "hotkey-user"), "hotkey fixture should load");
+        auto& selected = hotkey_config.configuration();
+        selected.controller.name = "controller";
+        selected.resource = "resource";
+        Configuration::Option shortcut;
+        shortcut.name = "shortcut";
+        shortcut.hotkeys["combo"] = "Ctrl+Alt+A";
+        selected.task.emplace_back(Configuration::Task { .name = "task", .option = { shortcut } });
+        auto result = hotkey_config.generate_runtime();
+        require(result && result->task.size() == 1, "hotkey runtime should generate one task");
+        if (result && result->task.size() == 1) {
+            const auto& overrides = result->task.front().pipeline_override.as_array();
+            require(overrides.size() == 2, "hotkey override should be appended");
+            if (overrides.size() == 2) {
+                require(
+                    overrides.at(1).at("Main")
+                        == json::object { { "key", 29 }, { "primary", 29 }, { "modifier1", 113 }, { "modifier2", 57 } },
+                    "documented dotted placeholders and the base placeholder should become integer keycodes");
+            }
+        }
+        for (const auto& combo : { "A", "Ctrl+A" }) {
+            selected.task.front().option.front().hotkeys["combo"] = combo;
+            require(!hotkey_config.generate_runtime(), "missing referenced modifiers must prevent runtime generation");
+        }
+        selected.task.front().option.front().hotkeys["combo"] = "NoSuchKey";
+        require(!hotkey_config.generate_runtime(), "an invalid saved combo must prevent runtime generation");
+        selected.task.front().option.clear();
+        selected.global_option = { shortcut };
+        selected.global_option.front().hotkeys["combo"] = "NoSuchKey";
+        require(!hotkey_config.generate_runtime(), "invalid global hotkeys must also prevent runtime generation");
+    }
+
 #if !defined(_WIN32)
     require(
         Runner::run_pretasks(

@@ -20,6 +20,7 @@
 #include <unistd.h>
 #endif
 
+#include "HotkeyMap.h"
 #include "MaaFramework/Utility/MaaBuffer.h"
 #include "MaaToolkit/AdbDevice/MaaToolkitAdbDevice.h"
 #include "MaaToolkit/DesktopWindow/MaaToolkitDesktopWindow.h"
@@ -29,6 +30,7 @@
 #include "MaaUtils/Platform.h"
 #include "ProjectInterface/Parser.h"
 #include "ProjectInterface/Runner.h"
+#include "TerminalText.h"
 #include "input.h"
 
 #if defined(__APPLE__)
@@ -439,6 +441,13 @@ void Interactor::print_config()
                 for (const auto& [key, val] : opt.inputs) {
                     std::cout << "\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(display_input_value(opt.name, key, val))
                               << "\n";
+                }
+            }
+            else if (!opt.hotkeys.empty()) {
+                std::cout << "\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(opt.name)) << ":\n";
+                for (const auto& [key, val] : opt.hotkeys) {
+                    std::cout << "\t\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(key)) << ": "
+                              << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(val)) << "\n";
                 }
             }
         }
@@ -2080,6 +2089,69 @@ bool Interactor::process_option(
         }
         std::cout << "\n";
     } break;
+
+    case InterfaceData::Option::Type::Hotkey: {
+        const auto keycode_set = MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration());
+
+        std::cout << MAA_NS::utf8_to_crt(
+            std::format(
+                "\n\n## Hotkey option \"{}\" for \"{}\" ##\n\n",
+                MaaPiCliTerminal::sanitize(opt_display_name),
+                MaaPiCliTerminal::sanitize(task_display_name)));
+        if (!opt.description.empty()) {
+            std::string desc_text = read_text_content(opt.description);
+            std::cout << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(desc_text, true)) << "\n\n";
+        }
+
+        for (const auto& hotkey_def : opt.hotkeys) {
+            if (auto_accept_default) {
+                auto combo = MaaPiCliHotkey::parse(hotkey_def.default_, keycode_set);
+                if (!combo) {
+                    std::cout << "Cannot accept an invalid default hotkey for the selected controller.\n";
+                    return false;
+                }
+                config_opt.hotkeys[hotkey_def.name] = combo->canonical;
+                continue;
+            }
+
+            std::string hotkey_display_name = get_display_name(hotkey_def.name, hotkey_def.label);
+            if (!hotkey_def.description.empty()) {
+                std::string hotkey_desc = read_text_content(hotkey_def.description);
+                std::cout << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(hotkey_desc, true)) << "\n";
+            }
+            std::cout << MAA_NS::utf8_to_crt(
+                std::format(
+                    "{} [{}] (e.g. Ctrl+Alt+F1, press Enter to keep): ",
+                    MaaPiCliTerminal::sanitize(hotkey_display_name),
+                    MaaPiCliTerminal::sanitize(hotkey_def.default_)));
+
+            auto buffer = read_line();
+            if (!buffer) {
+                input_aborted_ = true;
+                return false;
+            }
+
+            std::string value = buffer->empty() ? hotkey_def.default_ : *buffer;
+
+            // Normalize and validate the combo; retry until it resolves on the current platform.
+            while (true) {
+                if (auto parts = MaaPiCliHotkey::parse(value, keycode_set)) {
+                    value = parts->canonical;
+                    break;
+                }
+                std::cout << MAA_NS::utf8_to_crt(std::format("Invalid hotkey \"{}\", please retry: ", MaaPiCliTerminal::sanitize(value)));
+                buffer = read_line();
+                if (!buffer) {
+                    input_aborted_ = true;
+                    return false;
+                }
+                value = buffer->empty() ? hotkey_def.default_ : *buffer;
+            }
+
+            config_opt.hotkeys[hotkey_def.name] = value;
+        }
+        std::cout << "\n";
+    } break;
     }
 
     std::vector<Configuration::Option> nested_options;
@@ -2224,6 +2296,13 @@ void Interactor::print_config_tasks(bool with_index) const
                 for (const auto& [key, val] : opt.inputs) {
                     std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(key) << ": "
                               << MAA_NS::utf8_to_crt(display_input_value(opt.name, key, val)) << "\n";
+                }
+            }
+            else if (!opt.hotkeys.empty()) {
+                std::cout << "\t\t- " << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(opt.name)) << ":\n";
+                for (const auto& [key, val] : opt.hotkeys) {
+                    std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(key)) << ": "
+                              << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(val)) << "\n";
                 }
             }
         }
@@ -2600,8 +2679,8 @@ bool Interactor::ensure_declared_option_tree(
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
-    std::vector<Configuration::Option> existing_options = std::move(config_options);
-    config_options.clear();
+    auto existing_options = config_options;
+    std::vector<Configuration::Option> completed_options;
 
     std::function<bool(const std::string&)> ensure_option = [&](const std::string& option_name) -> bool {
         auto data_option_iter = config_.interface_data().option.find(option_name);
@@ -2623,7 +2702,7 @@ bool Interactor::ensure_declared_option_tree(
             std::ranges::find_if(existing_options, [&](const auto& config_option) { return config_option.name == option_name; });
         if (existing_option_iter == existing_options.end()) {
             // Interface changes may add a required option; automatic completion must not interrupt runtime setup.
-            return process_option(option_name, context_display_name, config_options, auto_accept_default);
+            return process_option(option_name, context_display_name, completed_options, auto_accept_default);
         }
 
         if (data_option.type == InterfaceData::Option::Type::Input) {
@@ -2633,15 +2712,30 @@ bool Interactor::ensure_declared_option_tree(
                 }
             }
         }
+        else if (data_option.type == InterfaceData::Option::Type::Hotkey) {
+            for (const auto& hotkey_def : data_option.hotkeys) {
+                if (!existing_option_iter->hotkeys.contains(hotkey_def.name)) {
+                    existing_option_iter->hotkeys.emplace(hotkey_def.name, hotkey_def.default_);
+                }
+            }
+            if (!MaaPiCliHotkey::normalize_hotkeys(
+                    data_option,
+                    *existing_option_iter,
+                    MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                LogError << "Invalid configured hotkey" << VAR(option_name);
+                std::cout << "Cannot use the saved hotkey for the selected controller. Reconfigure the option before running tasks.\n";
+                return false;
+            }
+        }
 
         std::vector<const InterfaceData::Option::Case*> selected_cases;
         if (!select_runtime_option_cases(option_name, existing_options, selected_cases)) {
             LogWarn << "Invalid runtime option found, recreating it" << VAR(context_display_name) << VAR(option_name);
             existing_options.erase(existing_option_iter);
-            return process_option(option_name, context_display_name, config_options, auto_accept_default);
+            return process_option(option_name, context_display_name, completed_options, auto_accept_default);
         }
 
-        config_options.push_back(*existing_option_iter);
+        completed_options.push_back(*existing_option_iter);
         for (const auto* selected_case : selected_cases) {
             for (const auto& active_option : selected_case->option) {
                 if (!ensure_option(active_option)) {
@@ -2659,6 +2753,7 @@ bool Interactor::ensure_declared_option_tree(
         }
     }
 
+    config_options = std::move(completed_options);
     return true;
 }
 
@@ -2913,6 +3008,27 @@ bool Interactor::apply_preset()
                         option.inputs.emplace(key, value.as_string());
                     }
                     break;
+                case InterfaceData::Option::Type::Hotkey:
+                    if (!option_value.is_object()) {
+                        LogError << "Invalid preset hotkey value" << VAR(preset_pretask.name) << VAR(option_name);
+                        return false;
+                    }
+                    for (const auto& [key, value] : option_value.as_object()) {
+                        auto hotkey = std::ranges::find(data_option.hotkeys, key, &InterfaceData::Option::Hotkey::name);
+                        if (hotkey == data_option.hotkeys.end() || !value.is_string()) {
+                            LogError << "Invalid preset hotkey" << VAR(preset_pretask.name) << VAR(option_name) << VAR(key);
+                            return false;
+                        }
+                        option.hotkeys.emplace(key, value.as_string());
+                    }
+                    if (!MaaPiCliHotkey::normalize_hotkeys(
+                            data_option,
+                            option,
+                            MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                        LogError << "Invalid preset hotkey combo" << VAR(preset_pretask.name) << VAR(option_name);
+                        return false;
+                    }
+                    break;
                 }
                 item.option.emplace_back(std::move(option));
             }
@@ -2993,6 +3109,27 @@ bool Interactor::apply_preset()
                             config_opt.inputs[k] = v.as_string();
                         }
                     }
+                }
+                break;
+            case InterfaceData::Option::Type::Hotkey:
+                if (!opt_value.is_object()) {
+                    LogError << "Invalid preset hotkey value" << VAR(preset_task.name) << VAR(opt_name);
+                    return false;
+                }
+                for (const auto& [key, value] : opt_value.as_object()) {
+                    const auto field = std::ranges::find(opt_iter->second.hotkeys, key, &InterfaceData::Option::Hotkey::name);
+                    if (field == opt_iter->second.hotkeys.end() || !value.is_string()) {
+                        LogError << "Invalid preset hotkey field" << VAR(preset_task.name) << VAR(opt_name) << VAR(key);
+                        return false;
+                    }
+                    config_opt.hotkeys[key] = value.as_string();
+                }
+                if (!MaaPiCliHotkey::normalize_hotkeys(
+                        opt_iter->second,
+                        config_opt,
+                        MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                    LogError << "Invalid preset hotkey combo" << VAR(preset_task.name) << VAR(opt_name);
+                    return false;
                 }
                 break;
             }

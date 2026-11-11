@@ -185,6 +185,7 @@ struct InterfaceData
             Input,
             Switch,
             Checkbox,
+            Hotkey, // v2.8.0
         };
 
         struct Case
@@ -236,6 +237,16 @@ struct InterfaceData
                 MEO_OPT password);
         };
 
+        struct Hotkey // v2.8.0
+        {
+            std::string name;
+            std::string label;
+            std::string description;
+            std::string default_; // human-readable combo, e.g. "Ctrl+A"
+
+            MEO_JSONIZATION(name, MEO_OPT label, MEO_OPT description, MEO_OPT MEO_KEY("default") default_);
+        };
+
         Type type = Type::Select;
         std::string label;
         std::string description;
@@ -243,7 +254,8 @@ struct InterfaceData
         std::vector<std::string> resource;   // v2.3.0: applicable resources
         std::vector<Case> cases;
         std::vector<Input> inputs;
-        json::object pipeline_override;                                   // for input type
+        std::vector<Hotkey> hotkeys;                                      // v2.8.0: for hotkey type
+        json::object pipeline_override;                                   // for input/hotkey type
         std::variant<std::string, std::vector<std::string>> default_case; // string for select/switch, array for checkbox
         std::optional<size_t> min_count;                                  // v2.10.1: for checkbox
         std::optional<size_t> max_count;                                  // v2.10.1: for checkbox
@@ -256,6 +268,7 @@ struct InterfaceData
             MEO_OPT resource,
             MEO_OPT cases,
             MEO_OPT inputs,
+            MEO_OPT hotkeys,
             MEO_OPT pipeline_override,
             MEO_OPT default_case,
             MEO_OPT min_count,
@@ -526,10 +539,12 @@ struct Configuration
         std::string value;                                   // for select/switch
         std::vector<std::string> values;                     // for checkbox
         std::unordered_map<std::string, std::string> inputs; // for input type
+        // v2.8.0: for hotkey type; human-readable combo per hotkey field name
+        std::unordered_map<std::string, std::string> hotkeys;
 
         bool operator==(const Option&) const = default;
 
-        MEO_JSONIZATION(name, MEO_OPT value, MEO_OPT values, MEO_OPT inputs);
+        MEO_JSONIZATION(name, MEO_OPT value, MEO_OPT values, MEO_OPT inputs, MEO_OPT hotkeys);
     };
 
     struct Task

@@ -68,16 +68,16 @@ ctest --test-dir build -C RelWithDebInfo --output-on-failure
 |----------|--------------|
 | 基础协议：项目信息、controller、resource、task、select/input/switch option、多资源加载与 pipeline override | ✅ 支持 |
 | `controller.attach_resource_path` 附加资源；`import` 拆分导入 PI 片段 | ✅ 支持 |
-| `checkbox` 多选；`option.controller/resource` 适用范围；全局、resource 级、controller 级 option；多级 option；`preset`；`import` 导入 preset；`focus.display` 渠道声明 | ⚠️ 部分支持：option 与 preset 可用；`focus.display` 因未处理 focus 回调而无效 |
+| `checkbox` 多选；`option.controller/resource` 适用范围；全局、resource 级、controller 级 option；多级 option；`preset`；`import` 导入 preset；`focus.display` 渠道声明 | ⚠️ 部分支持：option 与 preset 可用；focus 模板已处理，`log` 写入日志，其他展示渠道降级为带渠道标签的控制台输出 |
 | option 及其子 option 的 controller/resource 适用性过滤 | ✅ 支持 |
 | 顶层 `group` 分组声明与 `task.group`；`import` 导入 group | ✅ 支持 |
 | Agent 子进程 `PI_*` 环境变量：Client/UI 版本、语言、项目版本、当前 controller/resource 等 | ✅ 支持 |
 | `resource.hash` 资源完整性校验；校验发生在 `resource.path` 加载后、`attach_resource_path` 加载前 | ✅ 支持 |
 | `pretask` 在 Controller 启动前执行自定义程序；可把 option 当前值序列化为最后一个参数；`import` 导入 pretask | ✅ 支持 |
-| `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ⚠️ 部分支持：导入的 `global_option` 会合并并生效；`setting` 会解析与合并但不渲染；`hotkey` 未实现 |
+| `setting` 任务设置页 UI 声明；`hotkey` 快捷键 option；`import` 导入 `global_option` 与 `setting` | ⚠️ 部分支持：导入的 `global_option` 会合并并生效；`setting` 会解析与合并但不渲染；`hotkey` 通过文本输入组合键并映射虚拟按键码 |
 | `pretask.controller/resource` 适用范围过滤 | ✅ 支持 |
 | `telemetry.sentry` 匿名遥测配置：DSN、tracing、事务采样率、环境标签 | ❌ 未实现，不读取和上报遥测 |
-| `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 未实现；CLI 当前也未处理 focus 回调 |
+| `focus` 模板对象的 `trace` 字段，按回调消息控制节点结果遥测 | ❌ 不集成遥测，忽略 `trace`；focus 消息展示已支持 |
 | `telemetry.sentry.failure_attachments_sample_rate` 失败诊断附件采样率 | ❌ 未实现 |
 | `input.inputs[].password` 标记密码/密钥输入；要求掩码显示、配置加密存储、日志/遥测脱敏、pretask 传参时内存中解密 | ✅ 支持：CLI 隐藏输入并掩码展示；Windows 使用 DPAPI、macOS 使用 Keychain、Linux 使用 AES-GCM 加密配置；pretask 与 pipeline 使用内存明文 |
 | `checkbox` 的 `min_count` / `max_count`，限制可选和必选数量 | ✅ 支持：解析配置约束，在交互中阻止超出上限；已保存数量不足时要求补选，数量超限时清理选择 |
@@ -87,7 +87,11 @@ ctest --test-dir build -C RelWithDebInfo --output-on-failure
 | `input.inputs[].input_type` 指定 `text` / `file` / `directory` 编辑控件 | ⚠️ 降级支持：文件和目录显示路径提示，使用文本输入；保留默认值、正则校验和 `pipeline_type` 转换，不要求路径存在，不做分隔符转换或 `~` 展开 |
 | `PI_USER_DATA_DIR` 指定 Client 与 Agent 共用的用户数据目录 | ✅ 支持：向每个 Agent 传入加载配置时确定的用户数据目录绝对路径；与 Agent 的资源工作目录分别处理 |
 
-包含尚未支持字段的配置通常仍可被解析并加载其既有功能；具体支持情况见上表。使用 `hotkey` option 的项目可能无法得到预期交互，应优先为 CLI 提供其他 option 类型。
+包含尚未支持字段的配置通常仍可被解析并加载其既有功能；具体支持情况见上表。
+
+`hotkey` 使用文本输入（如 `Ctrl+Alt+F1`），不直接捕获物理按键事件。配置与预设保存人类可读的组合键字符串，前置任务也接收字符串；生成任务的 `pipeline_override` 时，按当前控制器转换为整数键码：Win32/Gamepad 使用 Win32 VK，Linux 默认使用 evdev（启用 `use_win32_vk_code` 时使用 VK），Adb/IOS 使用 Android 键码，MacOS/PlayCover 使用 macOS 虚拟键码。支持 `{名称}`、`{名称}.primary`、`{名称}.modifier1`、`{名称}.modifier2`；组合最多包含两个修饰键。非法预设和无法解析的自动默认值会被拒绝；运行时无法解析组合或缺少覆盖模板引用的修饰键时，阻止生成任务。仅支持客户端键码表收录的按键，不支持任意键名。
+
+focus 支持字符串模板及对象模板的 `content` / `display`，并从通知详情替换占位符。消息中的换行和制表符会保留，终端控制序列会被移除。`log` 写入带 `[focus:log]` 标签的运行日志；其他渠道写入带 `[focus:渠道]` 标签的控制台消息。`modal` 同样降级为输出，不能阻塞流水线；`trace` 不产生遥测上报。
 
 ## 推理运行环境
 
@@ -152,7 +156,7 @@ UDID、连接方式、取图方式和可选的 `config.server_port` 保存在 `c
 |------|----------|------|
 | 图标显示 | 所有层级的 `icon` 字段（项目、控制器、资源、任务、选项、case、分组、预设） | CLI 无法显示图片 |
 | Markdown 渲染 | `contact`、`license`、`welcome`、`description` 等支持 Markdown 的文本字段 | CLI 以纯文本原样输出，不渲染 Markdown 语法 |
-| focus 通知渠道 | `focus.display` 的 `toast`、`notification`、`dialog`、`modal` 渠道 | CLI 不具备 toast/系统通知/弹窗能力 |
+| focus 通知渠道 | `focus.display` 的 `toast`、`notification`、`dialog`、`modal` 渠道 | CLI 不具备 toast/系统通知/弹窗能力；消息降级为控制台输出，`modal` 不阻塞流水线 |
 | 分组折叠 | `group.default_expand` | CLI 无折叠/展开概念，始终平铺显示 |
 | 软件更新 | `github` 字段的版本检查与自动更新 | CLI 仅展示 GitHub 地址，不提供更新功能 |
 | 资源分发 | `mirrorchyan_rid`、`mirrorchyan_multiplatform` | 资源包分发管理不属于 CLI 职责 |
@@ -161,10 +165,10 @@ UDID、连接方式、取图方式和可选的 `config.server_port` 保存在 `c
 
 | 功能 | 协议行为 | CLI 实际行为 |
 |------|----------|-------------|
-| `focus` 回调消息 | Client 注册回调，按 `display` 渠道分发模板消息 | 未注册回调，不处理 focus 消息 |
+| `focus` 回调消息 | Client 注册回调，按 `display` 渠道分发模板消息 | 已注册回调并替换模板占位符；`log` 写入运行日志，其他渠道降级为控制台输出，均带渠道标签 |
 | `group.description` | 显示分组的详细描述 | 仅显示分组名称/label |
 | task 禁用态显示 | 不满足 resource/controller 约束的 task 灰显 | 直接过滤不显示 |
 | option 禁用态显示 | 不满足约束的 option 灰显 | 直接跳过不提示 |
-| `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 未实现 |
+| `setting` / `hotkey` | 渲染设置页分区；捕获快捷键并映射虚拟按键码 | `setting` 解析并合并但不渲染；`hotkey` 用文本输入组合键，按当前控制器校验并映射键码 |
 | `input_type: file/directory` | 系统文件/目录选择对话框及可编辑路径 | 终端文本输入并显示路径提示，路径字符串原样保存与传递 |
 | `telemetry` 与 `focus.trace` | 经用户授权后向 Sentry 上报崩溃、任务与指定节点结果 | 不集成遥测 |
