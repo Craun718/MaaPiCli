@@ -413,6 +413,49 @@ int main()
         require(Parser::parse_interface(definition).has_value(), "distinct hotkey fields should remain valid");
     }
 
+    if (auto fixture = Parser::parse_interface(fixture_dir / "hotkey_runtime/interface.json")) {
+        for (bool nested : { false, true }) {
+            auto data = *fixture;
+            Configuration config;
+            config.controller.name = "controller";
+            config.resource = "resource";
+            Configuration::Option shortcut;
+            shortcut.name = "shortcut";
+            shortcut.hotkeys = { { "combo", "Ctrl+Alt+A" }, { "obsolete", "F1" } };
+            Configuration::Task task;
+            task.name = "task";
+            if (nested) {
+                InterfaceData::Option parent;
+                parent.cases.emplace_back().name = "on";
+                parent.cases.front().option = { "shortcut" };
+                data.option["parent"] = parent;
+                data.task.front().option = { "parent" };
+                Configuration::Option selection;
+                selection.name = "parent";
+                selection.value = "on";
+                task.option.emplace_back(selection);
+            }
+            task.option.emplace_back(shortcut);
+            config.task.emplace_back(task);
+            require(!Parser::check_configuration(data, config), "removing stale task hotkeys should report a configuration change");
+            const auto& cleaned = config.task.front().option.back().hotkeys;
+            require(
+                cleaned.size() == 1 && cleaned.at("combo") == "Ctrl+Alt+A",
+                "only removed fields should be pruned, including nested options");
+            require(Parser::check_configuration(data, config), "task hotkey cleanup should be idempotent");
+            auto saved = Parser::parse_config(config.to_json());
+            require(saved.has_value(), "cleaned task configuration should round-trip");
+            if (saved) {
+                data.option.at("shortcut").hotkeys.emplace_back(InterfaceData::Option::Hotkey { .name = "obsolete", .default_ = "E" });
+                auto& option = saved->task.front().option.back();
+                require(
+                    MaaPiCliHotkey::normalize_hotkeys(data.option.at("shortcut"), option, MaaPiCliHotkey::KeycodeSet::Android),
+                    "reintroduced fields should accept their current default");
+                require(option.hotkeys.at("obsolete") == "E", "reintroduced fields must not restore the removed shortcut");
+            }
+        }
+    }
+
     auto zero_max_json = json::parse(
         R"json({
             "interface_version": 2,

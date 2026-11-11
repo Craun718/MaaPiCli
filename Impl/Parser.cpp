@@ -147,7 +147,18 @@ bool validate_task_option_selection(
     } break;
 
     case InterfaceData::Option::Type::Input:
+        break;
     case InterfaceData::Option::Type::Hotkey:
+        for (auto it = config_option.hotkeys.begin(); it != config_option.hotkeys.end();) {
+            if (std::ranges::any_of(data_option.hotkeys, [&](const auto& field) { return field.name == it->first; })) {
+                ++it;
+            }
+            else {
+                LogWarn << "Hotkey not found in interface, removing from task config" << VAR(config_option.name) << VAR(it->first);
+                it = config_option.hotkeys.erase(it);
+                changed = true;
+            }
+        }
         break;
     }
 
