@@ -137,8 +137,9 @@ if(MaaPiCli_BUILD_TESTS)
     target_compile_definitions(
         MaaPiCliInteractorTest PRIVATE MAAPICLI_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/cli/fixtures/eof")
     add_test(NAME MaaPiCliInteractorTest COMMAND MaaPiCliInteractorTest)
+    add_test(NAME MaaPiCliTextContentTest COMMAND MaaPiCliInteractorTest --text-content-only)
     set_tests_properties(
-        MaaPiCliInteractorTest
+        MaaPiCliInteractorTest MaaPiCliTextContentTest
         PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
 
     add_executable(MaaPiCliParserTest test/parser/parser_test.cpp)

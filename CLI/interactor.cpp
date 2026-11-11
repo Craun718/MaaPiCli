@@ -3194,10 +3194,30 @@ std::string Interactor::read_text_content(const std::string& text) const
     // 先翻译文本（如果以 $ 开头）
     std::string translated = config_.translate(text);
 
-    // 尝试作为文件路径读取
-    auto file_path = config_.resource_dir() / MAA_NS::path(translated);
+    // 只读取资源目录内的相对路径；翻译后的路径也必须通过边界校验。
+    const auto relative_path = MAA_NS::path(translated);
     constexpr size_t kMaxPath = 255;
-    if (MAA_NS::path_to_utf8_string(file_path).size() < kMaxPath && std::filesystem::exists(file_path)) {
+    if (relative_path.has_root_path() || translated.find('\0') != std::string::npos
+        || MAA_NS::path_to_utf8_string(config_.resource_dir() / relative_path).size() >= kMaxPath) {
+        return translated;
+    }
+
+    std::error_code ec;
+    const auto resource_dir = std::filesystem::weakly_canonical(config_.resource_dir(), ec);
+    if (ec) {
+        return translated;
+    }
+    const auto file_path = std::filesystem::weakly_canonical(resource_dir / relative_path, ec);
+    if (ec) {
+        return translated;
+    }
+    // 按目录组件比较，避免 resource-other 被当作 resource 的子目录；归一化会解析符号链接。
+    const auto [root_end, file_end] = std::mismatch(resource_dir.begin(), resource_dir.end(), file_path.begin(), file_path.end());
+    if (root_end != resource_dir.end()) {
+        return translated;
+    }
+
+    if (std::filesystem::is_regular_file(file_path, ec) && !ec) {
         std::ifstream ifs(file_path);
         if (ifs.is_open()) {
             std::stringstream buffer;
