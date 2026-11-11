@@ -106,12 +106,12 @@ void MAA_CALL on_tasker_event(void* /*view*/, const char* message, const char* d
     }
 
     for (const auto& channel : display_channels) {
-        const std::string line = MAA_NS::utf8_to_crt(std::format("[focus:{}] {}", channel, content));
+        const std::string line = std::format("[focus:{}] {}", channel, content);
         if (channel == "log") {
-            LogInfo << content;
+            LogInfo << line;
         }
         else {
-            std::cout << "\n" << line << "\n" << std::flush;
+            std::cout << "\n" << MAA_NS::utf8_to_crt(line) << "\n" << std::flush;
         }
     }
 }
