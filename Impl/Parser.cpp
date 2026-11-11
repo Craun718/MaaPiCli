@@ -323,6 +323,15 @@ bool validate_interface(const InterfaceData& data)
     }
 
     for (const auto& [name, option] : data.option) {
+        if (option.type == InterfaceData::Option::Type::Hotkey) {
+            std::unordered_set<std::string> fields;
+            for (const auto& field : option.hotkeys) {
+                if (!fields.emplace(field.name).second) {
+                    LogError << "Duplicate hotkey field name" << VAR(name) << VAR(field.name);
+                    return false;
+                }
+            }
+        }
         if (!validate_checkbox_definition(option)) {
             LogError << "Invalid checkbox count constraint" << VAR(name);
             return false;

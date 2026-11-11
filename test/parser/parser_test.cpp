@@ -403,6 +403,16 @@ int main()
         }
     }
 
+    if (auto fixture = json::open(fixture_dir / "hotkey_runtime/interface.json")) {
+        auto definition = *fixture;
+        auto& fields = definition["option"]["shortcut"]["hotkeys"].as_array();
+        const auto duplicate = fields.at(0);
+        fields.emplace_back(duplicate);
+        require(!Parser::parse_interface(definition), "duplicate hotkey field names should be rejected");
+        fields[1]["name"] = "second-shortcut";
+        require(Parser::parse_interface(definition).has_value(), "distinct hotkey fields should remain valid");
+    }
+
     auto zero_max_json = json::parse(
         R"json({
             "interface_version": 2,
