@@ -28,10 +28,10 @@
 #include "Common/MaaTypes.h"
 #include "MaaUtils/Encoding.h"
 #include "MaaUtils/Logger.h"
-#include "TerminalText.h"
 #include "MaaUtils/Platform.h"
 #include "MaaUtils/ScopeLeave.hpp"
 #include "MaaUtils/StringMisc.hpp"
+#include "TerminalText.h"
 
 MAA_PROJECT_INTERFACE_NS_BEGIN
 

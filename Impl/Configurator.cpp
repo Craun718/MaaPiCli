@@ -2130,8 +2130,7 @@ bool Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
 
                 auto parts = MaaPiCliHotkey::parse(combo, keycode_set);
                 if (!parts) {
-                    LogError << "Unresolvable hotkey combo" << VAR(config_option.name) << VAR(hotkey_def.name)
-                            << VAR(combo);
+                    LogError << "Unresolvable hotkey combo" << VAR(config_option.name) << VAR(hotkey_def.name) << VAR(combo);
                     return false;
                 }
 
@@ -2147,8 +2146,8 @@ bool Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
                     }
                 }
                 if (modifier_missing) {
-                    LogError << "Combo has fewer modifiers than the override references"
-                            << VAR(config_option.name) << VAR(hotkey_def.name) << VAR(combo);
+                    LogError << "Combo has fewer modifiers than the override references" << VAR(config_option.name) << VAR(hotkey_def.name)
+                             << VAR(combo);
                     return false;
                 }
 
@@ -2196,10 +2195,8 @@ std::optional<RuntimeParam::Task> Configurator::generate_runtime_task(const Conf
                                       .pipeline_override = json::array { data_task.pipeline_override } };
 
     // v2.3.0: merge in priority order (later overrides earlier).
-    if (!merge_option_overrides(runtime_task, config_.global_option)
-        || !merge_option_overrides(runtime_task, config_.resource_option)
-        || !merge_option_overrides(runtime_task, config_.controller_option)
-        || !merge_option_overrides(runtime_task, config_task.option)) {
+    if (!merge_option_overrides(runtime_task, config_.global_option) || !merge_option_overrides(runtime_task, config_.resource_option)
+        || !merge_option_overrides(runtime_task, config_.controller_option) || !merge_option_overrides(runtime_task, config_task.option)) {
         return std::nullopt;
     }
 

@@ -21,7 +21,6 @@
 #endif
 
 #include "HotkeyMap.h"
-#include "TerminalText.h"
 #include "MaaFramework/Utility/MaaBuffer.h"
 #include "MaaToolkit/AdbDevice/MaaToolkitAdbDevice.h"
 #include "MaaToolkit/DesktopWindow/MaaToolkitDesktopWindow.h"
@@ -31,6 +30,7 @@
 #include "MaaUtils/Platform.h"
 #include "ProjectInterface/Parser.h"
 #include "ProjectInterface/Runner.h"
+#include "TerminalText.h"
 #include "input.h"
 
 #if defined(__APPLE__)
@@ -2719,7 +2719,9 @@ bool Interactor::ensure_declared_option_tree(
                 }
             }
             if (!MaaPiCliHotkey::normalize_hotkeys(
-                    data_option, *existing_option_iter, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                    data_option,
+                    *existing_option_iter,
+                    MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
                 LogError << "Invalid configured hotkey" << VAR(option_name);
                 std::cout << "Cannot use the saved hotkey for the selected controller. Reconfigure the option before running tasks.\n";
                 return false;
@@ -3020,7 +3022,9 @@ bool Interactor::apply_preset()
                         option.hotkeys.emplace(key, value.as_string());
                     }
                     if (!MaaPiCliHotkey::normalize_hotkeys(
-                            data_option, option, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                            data_option,
+                            option,
+                            MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
                         LogError << "Invalid preset hotkey combo" << VAR(preset_pretask.name) << VAR(option_name);
                         return false;
                     }
@@ -3121,7 +3125,9 @@ bool Interactor::apply_preset()
                     config_opt.hotkeys[key] = value.as_string();
                 }
                 if (!MaaPiCliHotkey::normalize_hotkeys(
-                        opt_iter->second, config_opt, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                        opt_iter->second,
+                        config_opt,
+                        MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
                     LogError << "Invalid preset hotkey combo" << VAR(preset_task.name) << VAR(opt_name);
                     return false;
                 }

@@ -127,7 +127,8 @@ int main()
             require(overrides.size() == 2, "hotkey override should be appended");
             if (overrides.size() == 2) {
                 require(
-                    overrides.at(1).at("Main") == json::object { { "key", 29 }, { "primary", 29 }, { "modifier1", 113 }, { "modifier2", 57 } },
+                    overrides.at(1).at("Main")
+                        == json::object { { "key", 29 }, { "primary", 29 }, { "modifier1", 113 }, { "modifier2", 57 } },
                     "documented dotted placeholders and the base placeholder should become integer keycodes");
             }
         }
