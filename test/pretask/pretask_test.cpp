@@ -131,6 +131,10 @@ int main()
                     "documented dotted placeholders and the base placeholder should become integer keycodes");
             }
         }
+        for (const auto& combo : { "A", "Ctrl+A" }) {
+            selected.task.front().option.front().hotkeys["combo"] = combo;
+            require(!hotkey_config.generate_runtime(), "missing referenced modifiers must prevent runtime generation");
+        }
         selected.task.front().option.front().hotkeys["combo"] = "NoSuchKey";
         require(!hotkey_config.generate_runtime(), "an invalid saved combo must prevent runtime generation");
         selected.task.front().option.clear();

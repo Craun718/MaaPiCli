@@ -2175,9 +2175,9 @@ bool Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
                     }
                 }
                 if (modifier_missing) {
-                    LogWarn << "Combo has fewer modifiers than the override references, skip placeholder replacement"
+                    LogError << "Combo has fewer modifiers than the override references"
                             << VAR(config_option.name) << VAR(hotkey_def.name) << VAR(combo);
-                    continue;
+                    return false;
                 }
 
                 // v2.8.0: hotkey placeholders are replaced with a single integer key code.
