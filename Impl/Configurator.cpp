@@ -2318,6 +2318,18 @@ bool Configurator::append_pretask_option(
         }
         options[option_name] = std::move(input_values);
     } break;
+
+    case InterfaceData::Option::Type::Hotkey: {
+        json::object hotkey_values;
+        for (const auto& hotkey_def : data_option.hotkeys) {
+            std::string value = hotkey_def.default_;
+            if (auto value_iter = config_option.hotkeys.find(hotkey_def.name); value_iter != config_option.hotkeys.end()) {
+                value = value_iter->second;
+            }
+            hotkey_values[hotkey_def.name] = std::move(value);
+        }
+        options[option_name] = std::move(hotkey_values);
+    } break;
     }
 
     return true;
