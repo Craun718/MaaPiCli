@@ -20,7 +20,12 @@ void require(bool condition, const char* message)
     }
 }
 
-void check_preset(bool pretask, const json::value& value, const std::string& default_combo, bool accepted)
+void check_preset(
+    bool pretask,
+    const json::value& value,
+    const std::string& default_combo,
+    bool accepted,
+    const std::string& controller = "Adb")
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
     const auto root = std::filesystem::temp_directory_path()
@@ -36,6 +41,7 @@ void check_preset(bool pretask, const json::value& value, const std::string& def
         "preset": [{"name":"preset", "task":[{"name":"task"}]}]
     })");
     interface["option"]["shortcut"]["hotkeys"][0]["default"] = default_combo;
+    interface["controller"][0]["type"] = controller;
     if (pretask) {
         interface["preset"][0]["task"] = json::array { json::object { { "name", "original" } } };
         interface["preset"][0]["pretask"] = json::array { json::object { { "name", "prepare" } } };
@@ -95,6 +101,11 @@ int main()
         check_preset(pretask, json::object { { "combo", "NoSuchKey" } }, "Ctrl+E", false);
         check_preset(pretask, json::value(), "NoSuchKey", false);
         check_preset(pretask, json::object { }, "NoSuchKey", false);
+        check_preset(pretask, json::value(), "Ctrl+E", true);
+        check_preset(pretask, "Ctrl+E", "Ctrl+E", false);
+        check_preset(pretask, json::object { { "combo", 42 } }, "Ctrl+E", false);
+        check_preset(pretask, json::object { { "unknown", "Ctrl+E" } }, "Ctrl+E", false);
+        check_preset(pretask, json::object { { "combo", "Insert" } }, "Ctrl+E", false, "MacOS");
     }
     return failures == 0 ? 0 : 1;
 }

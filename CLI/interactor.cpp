@@ -3106,12 +3106,17 @@ bool Interactor::apply_preset()
                 }
                 break;
             case InterfaceData::Option::Type::Hotkey:
-                if (opt_value.is_object()) {
-                    for (const auto& [k, v] : opt_value.as_object()) {
-                        if (v.is_string()) {
-                            config_opt.hotkeys[k] = v.as_string();
-                        }
+                if (!opt_value.is_object()) {
+                    LogError << "Invalid preset hotkey value" << VAR(preset_task.name) << VAR(opt_name);
+                    return false;
+                }
+                for (const auto& [key, value] : opt_value.as_object()) {
+                    const auto field = std::ranges::find(opt_iter->second.hotkeys, key, &InterfaceData::Option::Hotkey::name);
+                    if (field == opt_iter->second.hotkeys.end() || !value.is_string()) {
+                        LogError << "Invalid preset hotkey field" << VAR(preset_task.name) << VAR(opt_name) << VAR(key);
+                        return false;
                     }
+                    config_opt.hotkeys[key] = value.as_string();
                 }
                 if (!MaaPiCliHotkey::normalize_hotkeys(
                         opt_iter->second, config_opt, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
