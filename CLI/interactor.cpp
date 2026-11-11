@@ -2127,8 +2127,8 @@ bool Interactor::process_option(
         for (const auto& hotkey_def : opt.hotkeys) {
             if (auto_accept_default) {
                 if (!MaaPiCliHotkey::parse(hotkey_def.default_, keycode_set)) {
-                    LogWarn << "Default hotkey combo is unresolvable on the selected controller" << VAR(opt.name)
-                            << VAR(hotkey_def.name) << VAR(hotkey_def.default_);
+                    LogWarn << "Default hotkey combo is unresolvable on the selected controller" << VAR(option_name) << VAR(hotkey_def.name)
+                            << VAR(hotkey_def.default_);
                 }
                 config_opt.hotkeys[hotkey_def.name] = hotkey_def.default_;
                 continue;
@@ -3015,7 +3015,6 @@ bool Interactor::apply_preset()
                         option.inputs.emplace(key, value.as_string());
                     }
                     break;
-                }
                 case InterfaceData::Option::Type::Hotkey:
                     if (!option_value.is_object()) {
                         LogError << "Invalid preset hotkey value" << VAR(preset_pretask.name) << VAR(option_name);

@@ -776,11 +776,6 @@ int main()
         }
     }
 
-    if (failures != 0) {
-        std::cerr << failures << " parser test assertion(s) failed\n";
-        return 1;
-    }
-
     {
         using namespace MaaPiCliHotkey;
         // Key code tables per controller family.
@@ -798,6 +793,8 @@ int main()
         require(ctrl && *ctrl == 0x11, "Win32 VK table should resolve Control to VK_CONTROL");
         auto option_key = find_keycode("Option", KeycodeSet::MacVirtual);
         require(option_key && *option_key == 0x3A, "macOS table should resolve Option");
+        auto android_ctrl = find_keycode("Ctrl", KeycodeSet::Android);
+        require(android_ctrl && *android_ctrl == 113, "Android table should map Ctrl to KEYCODE_CTRL_LEFT (113)");
 
         // Combos: modifiers first, primary last, at most two modifiers.
         auto combo = parse("Ctrl+Shift+A", KeycodeSet::Win32Vk);
@@ -820,6 +817,11 @@ int main()
         // Keys unavailable on a platform should not resolve on it.
         require(!find_keycode("Insert", KeycodeSet::MacVirtual), "macOS table has no Insert key");
         require(find_keycode("Insert", KeycodeSet::Win32Vk).has_value(), "Win32 VK table has an Insert key");
+    }
+
+    if (failures != 0) {
+        std::cerr << failures << " parser test assertion(s) failed\n";
+        return 1;
     }
 
     std::cout << "MaaPiCli parser tests passed\n";

@@ -2183,8 +2183,7 @@ void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
                 // v2.8.0: hotkey placeholders are replaced with a single integer key code.
                 auto replace_with_code = [&](std::string_view placeholder, int code) {
                     const std::string value = std::to_string(code);
-                    override_str =
-                        MaaNS::string_replace_all(override_str, std::string("\"{") + std::string(placeholder) + "}\"", value);
+                    override_str = MaaNS::string_replace_all(override_str, std::string("\"{") + std::string(placeholder) + "}\"", value);
                     override_str = MaaNS::string_replace_all(override_str, std::string("{") + std::string(placeholder) + "}", value);
                 };
 
