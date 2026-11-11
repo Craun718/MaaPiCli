@@ -43,6 +43,9 @@ target_link_libraries(
            Boost::regex
            ${OpenCV_LIBS})
 
+# v2.5.0: PI_CLIENT_VERSION requires the client's own version, not MaaFramework's.
+target_compile_definitions(MaaPiCliCore PRIVATE MAA_PI_CLI_VERSION="${PROJECT_VERSION}")
+
 if(LINUX)
     find_package(Threads REQUIRED)
     target_link_libraries(MaaPiCliCore PUBLIC Threads::Threads ${CMAKE_DL_LIBS})

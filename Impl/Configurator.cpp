@@ -1972,7 +1972,10 @@ std::optional<RuntimeParam> Configurator::generate_runtime() const
     std::unordered_map<std::string, std::string> pi_env;
     pi_env["PI_INTERFACE_VERSION"] = "v2.11.0";
     pi_env["PI_CLIENT_NAME"] = "MaaPiCli";
-    pi_env["PI_CLIENT_VERSION"] = MaaVersion();
+#ifndef MAA_PI_CLI_VERSION
+#define MAA_PI_CLI_VERSION "unknown"
+#endif
+    pi_env["PI_CLIENT_VERSION"] = MAA_PI_CLI_VERSION;
     pi_env["PI_CLIENT_LANGUAGE"] = detect_system_language();
     pi_env["PI_CLIENT_MAAFW_VERSION"] = MaaVersion();
     pi_env["PI_USER_DATA_DIR"] = MaaNS::path_to_utf8_string(user_dir_);
