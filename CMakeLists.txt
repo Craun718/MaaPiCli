@@ -136,6 +136,7 @@ if(MaaPiCli_BUILD_TESTS)
 
     add_executable(MaaPiCliParserTest test/parser/parser_test.cpp)
     target_compile_features(MaaPiCliParserTest PRIVATE cxx_std_20)
+    target_include_directories(MaaPiCliParserTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Impl)
     target_link_libraries(MaaPiCliParserTest PRIVATE MaaPiCli::Core)
     target_compile_definitions(
         MaaPiCliParserTest PRIVATE MAAPICLI_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/parser/fixtures")
