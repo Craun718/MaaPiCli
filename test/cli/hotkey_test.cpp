@@ -25,7 +25,8 @@ void check_preset(
     const json::value& value,
     const std::string& default_combo,
     bool accepted,
-    const std::string& controller = "Adb")
+    const std::string& controller = "Adb",
+    const std::string& expected_combo = "Ctrl+E")
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
     const auto root = std::filesystem::temp_directory_path()
@@ -78,7 +79,7 @@ void check_preset(
     require(saved.has_value(), "configuration should remain readable");
     if (saved && accepted) {
         const auto& options = pretask ? saved->pretask.front().option : saved->task.front().option;
-        require(options.size() == 1 && options.front().hotkeys.at("combo") == "Ctrl+E", "preset strings should be canonicalized");
+        require(options.size() == 1 && options.front().hotkeys.at("combo") == expected_combo, "preset strings should be canonicalized");
     }
     if (saved && !accepted) {
         require(
@@ -87,6 +88,91 @@ void check_preset(
     }
     std::filesystem::remove_all(root);
 }
+
+void check_failed_completion(const std::string& scope)
+{
+    using namespace MAA_PROJECT_INTERFACE_NS;
+    const auto root = std::filesystem::temp_directory_path()
+                      / ("maapicli-hotkey-failure-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root / "user/config");
+    auto interface = *json::parse(R"({
+        "interface_version": 2,
+        "controller": [{"name":"controller", "type":"Adb"}],
+        "resource": [{"name":"resource", "path":["resource"]}],
+        "task": [{"name":"task", "entry":"Main"}],
+        "option": {
+            "first":{"type":"input", "inputs":[{"name":"note"}, {"name":"missing", "default":"new"}]},
+            "shortcut":{"type":"hotkey", "hotkeys":[{"name":"combo", "default":"Ctrl+E"}]},
+            "last":{"type":"input", "inputs":[{"name":"note"}]}
+        }
+    })");
+    const json::array declarations { "first", "shortcut", "last" };
+    if (scope == "task") {
+        interface["task"][0]["option"] = declarations;
+    }
+    else if (scope == "global") {
+        interface["global_option"] = declarations;
+    }
+    else {
+        interface["pretask"] = json::array { json::object { { "name", "prepare" }, { "exec", "unused" }, { "option", declarations } } };
+    }
+    {
+        std::ofstream out(root / "interface.json");
+        out << interface.dumps();
+    }
+    Configuration config;
+    config.controller.name = "controller";
+    config.resource = "resource";
+    config.task.emplace_back().name = "task";
+    config.enabled_pretask = scope == "pretask" ? std::vector<std::string> { "prepare" } : std::vector<std::string> { };
+    Configuration::Option first;
+    first.name = "first";
+    first.inputs["note"] = "keep-first";
+    Configuration::Option shortcut;
+    shortcut.name = "shortcut";
+    shortcut.hotkeys["combo"] = "NoSuchKey";
+    Configuration::Option last;
+    last.name = "last";
+    last.inputs["note"] = "keep-last";
+    const std::vector<Configuration::Option> original { first, shortcut, last };
+    if (scope == "task") {
+        config.task.front().option = original;
+    }
+    else if (scope == "global") {
+        config.global_option = original;
+    }
+    else {
+        config.pretask.emplace_back(Configuration::Pretask { .name = "prepare", .option = original });
+    }
+    {
+        std::ofstream out(root / "user/config/maa_pi_config.json");
+        out << config.to_json().dumps();
+    }
+    // Moving the only task to its current position performs a later successful
+    // action and save, exposing any partial mutation left by the failed run.
+    std::istringstream input("4\n1\n1\n7\n");
+    std::ostringstream output;
+    const auto old_input = std::cin.rdbuf(input.rdbuf());
+    const auto old_output = std::cout.rdbuf(output.rdbuf());
+    {
+        Interactor interactor(root / "user");
+        require(interactor.load(root), "invalid saved hotkey fixture should load");
+        require(!interactor.run(), "invalid saved hotkeys must stop before executing tasks");
+        require(interactor.interact(), "a subsequent action should save and exit cleanly");
+    }
+    std::cin.rdbuf(old_input);
+    std::cout.rdbuf(old_output);
+    const auto saved = Parser::parse_config(root / "user/config/maa_pi_config.json");
+    require(saved.has_value(), "configuration should remain readable after failure and subsequent save");
+    if (saved) {
+        const auto& options = scope == "task"     ? saved->task.front().option
+                              : scope == "global" ? saved->global_option
+                                                  : saved->pretask.front().option;
+        require(options == original, "failed completion must preserve every original option and field through a later save");
+    }
+    std::filesystem::remove_all(root);
+}
+
 }
 
 int main()
@@ -149,8 +235,11 @@ int main()
             "B")
             == "AB",
         "overlong UTF-8 controls should not reach the terminal");
+    for (const auto& scope : { "task", "global", "pretask" }) {
+        check_failed_completion(scope);
+    }
     for (bool pretask : { false, true }) {
-        check_preset(pretask, json::object { { "combo", "control+e" } }, "Ctrl+E", true);
+        check_preset(pretask, json::object { { "combo", "control+f" } }, "Ctrl+E", true, "Adb", "Ctrl+F");
         check_preset(pretask, json::object { { "combo", "NoSuchKey" } }, "Ctrl+E", false);
         check_preset(pretask, json::value(), "NoSuchKey", false);
         check_preset(pretask, json::object { }, "NoSuchKey", false);

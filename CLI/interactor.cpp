@@ -2679,8 +2679,8 @@ bool Interactor::ensure_declared_option_tree(
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
-    std::vector<Configuration::Option> existing_options = std::move(config_options);
-    config_options.clear();
+    auto existing_options = config_options;
+    std::vector<Configuration::Option> completed_options;
 
     std::function<bool(const std::string&)> ensure_option = [&](const std::string& option_name) -> bool {
         auto data_option_iter = config_.interface_data().option.find(option_name);
@@ -2702,7 +2702,7 @@ bool Interactor::ensure_declared_option_tree(
             std::ranges::find_if(existing_options, [&](const auto& config_option) { return config_option.name == option_name; });
         if (existing_option_iter == existing_options.end()) {
             // Interface changes may add a required option; automatic completion must not interrupt runtime setup.
-            return process_option(option_name, context_display_name, config_options, auto_accept_default);
+            return process_option(option_name, context_display_name, completed_options, auto_accept_default);
         }
 
         if (data_option.type == InterfaceData::Option::Type::Input) {
@@ -2721,6 +2721,7 @@ bool Interactor::ensure_declared_option_tree(
             if (!MaaPiCliHotkey::normalize_hotkeys(
                     data_option, *existing_option_iter, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
                 LogError << "Invalid configured hotkey" << VAR(option_name);
+                std::cout << "Cannot use the saved hotkey for the selected controller. Reconfigure the option before running tasks.\n";
                 return false;
             }
         }
@@ -2729,10 +2730,10 @@ bool Interactor::ensure_declared_option_tree(
         if (!select_runtime_option_cases(option_name, existing_options, selected_cases)) {
             LogWarn << "Invalid runtime option found, recreating it" << VAR(context_display_name) << VAR(option_name);
             existing_options.erase(existing_option_iter);
-            return process_option(option_name, context_display_name, config_options, auto_accept_default);
+            return process_option(option_name, context_display_name, completed_options, auto_accept_default);
         }
 
-        config_options.push_back(*existing_option_iter);
+        completed_options.push_back(*existing_option_iter);
         for (const auto* selected_case : selected_cases) {
             for (const auto& active_option : selected_case->option) {
                 if (!ensure_option(active_option)) {
@@ -2750,6 +2751,7 @@ bool Interactor::ensure_declared_option_tree(
         }
     }
 
+    config_options = std::move(completed_options);
     return true;
 }
 
