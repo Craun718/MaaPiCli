@@ -17,6 +17,7 @@ set(maa_pi_cli_core_src
     CLI/interactor.cpp
     CLI/interactor.h
     Impl/Configurator.cpp
+    Impl/HotkeyMap.cpp
     Impl/Parser.cpp
     Impl/Runner.cpp
     Impl/SecretStore.cpp
@@ -30,7 +31,8 @@ target_include_directories(
     MaaPiCliCore
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-           $<INSTALL_INTERFACE:include>)
+           $<INSTALL_INTERFACE:include>
+    PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Impl>)
 
 target_compile_features(MaaPiCliCore PUBLIC cxx_std_20)
 target_link_libraries(
@@ -42,6 +44,9 @@ target_link_libraries(
            Boost::system
            Boost::regex
            ${OpenCV_LIBS})
+
+# v2.5.0: PI_CLIENT_VERSION requires the client's own version, not MaaFramework's.
+target_compile_definitions(MaaPiCliCore PRIVATE MAA_PI_CLI_VERSION="${PROJECT_VERSION}")
 
 if(LINUX)
     find_package(Threads REQUIRED)
@@ -111,6 +116,13 @@ endif()
 if(MaaPiCli_BUILD_TESTS)
     enable_testing()
 
+    add_executable(MaaPiCliHotkeyTest test/cli/hotkey_test.cpp)
+    target_link_libraries(MaaPiCliHotkeyTest PRIVATE MaaPiCli::Core)
+    add_test(NAME MaaPiCliHotkeyTest COMMAND MaaPiCliHotkeyTest)
+    set_tests_properties(
+        MaaPiCliHotkeyTest
+        PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
+
     add_executable(MaaPiCliInputTest test/cli/input_test.cpp)
     target_compile_features(MaaPiCliInputTest PRIVATE cxx_std_20)
     target_link_libraries(MaaPiCliInputTest PRIVATE MaaPiCli::Core)
@@ -131,6 +143,7 @@ if(MaaPiCli_BUILD_TESTS)
 
     add_executable(MaaPiCliParserTest test/parser/parser_test.cpp)
     target_compile_features(MaaPiCliParserTest PRIVATE cxx_std_20)
+    target_include_directories(MaaPiCliParserTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Impl)
     target_link_libraries(MaaPiCliParserTest PRIVATE MaaPiCli::Core)
     target_compile_definitions(
         MaaPiCliParserTest PRIVATE MAAPICLI_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/parser/fixtures")
