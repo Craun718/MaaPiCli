@@ -74,7 +74,7 @@ constexpr std::array<KeyEntry, 78> kKeys { {
     { "F11", { }, 0x7A, 87, 141, 0x67 },
     { "F12", { }, 0x7B, 88, 142, 0x6F },
     // modifiers
-    { "Ctrl", { "Control" }, 0x11, 29, 129, 0x3B },
+    { "Ctrl", { "Control" }, 0x11, 29, 113, 0x3B },
     { "Alt", { "Option" }, 0x12, 56, 57, 0x3A },
     { "Shift", { }, 0x10, 42, 59, 0x38 },
     { "Meta", { "Win", "Cmd", "Super" }, 0x5B, 125, 117, 0x37 },
