@@ -444,7 +444,7 @@ void Interactor::print_config()
                 }
             }
             else if (!opt.hotkeys.empty()) {
-                std::cout << "\t" << MAA_NS::utf8_to_crt(opt.name) << ":\n";
+                std::cout << "\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(opt.name)) << ":\n";
                 for (const auto& [key, val] : opt.hotkeys) {
                     std::cout << "\t\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(key)) << ": "
                               << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(val)) << "\n";
@@ -2299,7 +2299,7 @@ void Interactor::print_config_tasks(bool with_index) const
                 }
             }
             else if (!opt.hotkeys.empty()) {
-                std::cout << "\t\t- " << MAA_NS::utf8_to_crt(opt.name) << ":\n";
+                std::cout << "\t\t- " << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(opt.name)) << ":\n";
                 for (const auto& [key, val] : opt.hotkeys) {
                     std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(key)) << ": "
                               << MAA_NS::utf8_to_crt(MaaPiCliTerminal::sanitize(val)) << "\n";

@@ -173,6 +173,65 @@ void check_failed_completion(const std::string& scope)
     std::filesystem::remove_all(root);
 }
 
+void check_hotkey_option_names()
+{
+    using namespace MAA_PROJECT_INTERFACE_NS;
+    const auto root = std::filesystem::temp_directory_path()
+                      / ("maapicli-hotkey-name-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(root / "user/config");
+    const std::string unsafe_name =
+        "shortcut\x1b[2J\xc2\x9b"
+        "31m-safe";
+    const std::string clean_name = "shortcut-safe";
+    auto interface = *json::parse(R"({
+        "interface_version": 2,
+        "controller": [{"name":"controller", "type":"Adb"}],
+        "resource": [{"name":"resource", "path":["resource"]}],
+        "task": [{"name":"task", "entry":"Main"}],
+        "option": {}
+    })");
+    interface["global_option"] = json::array { unsafe_name };
+    interface["task"][0]["option"] = json::array { unsafe_name };
+    interface["option"][unsafe_name] =
+        json::object { { "type", "hotkey" }, { "hotkeys", json::array { json::object { { "name", "combo" }, { "default", "Ctrl+E" } } } } };
+    {
+        std::ofstream out(root / "interface.json");
+        out << interface.dumps();
+    }
+    Configuration config;
+    config.controller.name = "controller";
+    config.resource = "resource";
+    Configuration::Option option;
+    option.name = unsafe_name;
+    option.hotkeys["combo"] = "Ctrl+E";
+    config.global_option = { option };
+    config.task.emplace_back(Configuration::Task { .name = "task", .option = { option } });
+    {
+        std::ofstream out(root / "user/config/maa_pi_config.json");
+        out << config.to_json().dumps();
+    }
+    std::istringstream input;
+    std::ostringstream output;
+    const auto old_input = std::cin.rdbuf(input.rdbuf());
+    const auto old_output = std::cout.rdbuf(output.rdbuf());
+    {
+        Interactor interactor(root / "user");
+        require(interactor.load(root), "hotkey option name fixture should load");
+        interactor.print_config();
+    }
+    std::cin.rdbuf(old_input);
+    std::cout.rdbuf(old_output);
+    const auto displayed = output.str();
+    require(displayed.find(unsafe_name) == std::string::npos, "raw option name controls must not reach either configuration view");
+    require(displayed.find("\t" + clean_name + ":") != std::string::npos, "global option names should be sanitized");
+    require(displayed.find("\t\t- " + clean_name + ":") != std::string::npos, "task option names should be sanitized");
+    const auto saved = Parser::parse_config(root / "user/config/maa_pi_config.json");
+    require(
+        saved && saved->global_option.front().name == unsafe_name && saved->task.front().option.front().name == unsafe_name,
+        "display sanitization must not change stored option identifiers");
+    std::filesystem::remove_all(root);
+}
+
 }
 
 int main()
@@ -235,6 +294,7 @@ int main()
             "B")
             == "AB",
         "overlong UTF-8 controls should not reach the terminal");
+    check_hotkey_option_names();
     for (const auto& scope : { "task", "global", "pretask" }) {
         check_failed_completion(scope);
     }
