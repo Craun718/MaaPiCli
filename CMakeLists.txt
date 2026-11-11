@@ -116,6 +116,13 @@ endif()
 if(MaaPiCli_BUILD_TESTS)
     enable_testing()
 
+    add_executable(MaaPiCliHotkeyTest test/cli/hotkey_test.cpp)
+    target_link_libraries(MaaPiCliHotkeyTest PRIVATE MaaPiCli::Core)
+    add_test(NAME MaaPiCliHotkeyTest COMMAND MaaPiCliHotkeyTest)
+    set_tests_properties(
+        MaaPiCliHotkeyTest
+        PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:MaaFramework::MaaUtils>")
+
     add_executable(MaaPiCliInputTest test/cli/input_test.cpp)
     target_compile_features(MaaPiCliInputTest PRIVATE cxx_std_20)
     target_link_libraries(MaaPiCliInputTest PRIVATE MaaPiCli::Core)

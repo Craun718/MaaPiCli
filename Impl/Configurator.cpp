@@ -2116,35 +2116,7 @@ bool Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
         } break;
 
         case InterfaceData::Option::Type::Hotkey: {
-            // Key code table follows the controller family of the selected controller.
-            const auto interface_ctrl_iter =
-                std::ranges::find_if(data_.controller, [&](const auto& c) { return c.name == config_.controller.name; });
-            auto keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
-            bool use_win32_vk = false;
-            if (interface_ctrl_iter != data_.controller.end()) {
-                using MaaPiCliHotkey::KeycodeSet;
-                switch (interface_ctrl_iter->type) {
-                case InterfaceData::Controller::Type::Win32:
-                case InterfaceData::Controller::Type::Gamepad:
-                    keycode_set = KeycodeSet::Win32Vk;
-                    break;
-                case InterfaceData::Controller::Type::Linux:
-                    use_win32_vk = interface_ctrl_iter->lnx.use_win32_vk_code;
-                    keycode_set = use_win32_vk ? KeycodeSet::Win32Vk : KeycodeSet::LinuxEvdev;
-                    break;
-                case InterfaceData::Controller::Type::Adb:
-                case InterfaceData::Controller::Type::IOS:
-                    keycode_set = KeycodeSet::Android;
-                    break;
-                case InterfaceData::Controller::Type::MacOS:
-                case InterfaceData::Controller::Type::PlayCover:
-                    keycode_set = KeycodeSet::MacVirtual;
-                    break;
-                default:
-                    keycode_set = KeycodeSet::Win32Vk;
-                    break;
-                }
-            }
+            const auto keycode_set = MaaPiCliHotkey::keycode_set(data_, config_);
 
             std::string override_str = data_option.pipeline_override.dumps();
             for (const auto& hotkey_def : data_option.hotkeys) {

@@ -6,6 +6,47 @@
 
 namespace MaaPiCliHotkey
 {
+KeycodeSet keycode_set(const MAA_PROJECT_INTERFACE_NS::InterfaceData& data, const MAA_PROJECT_INTERFACE_NS::Configuration& config)
+{
+    using Type = MAA_PROJECT_INTERFACE_NS::InterfaceData::Controller::Type;
+    for (const auto& controller : data.controller) {
+        if (controller.name != config.controller.name) {
+            continue;
+        }
+        switch (controller.type) {
+        case Type::Linux:
+            return controller.lnx.use_win32_vk_code ? KeycodeSet::Win32Vk : KeycodeSet::LinuxEvdev;
+        case Type::Adb:
+        case Type::IOS:
+            return KeycodeSet::Android;
+        case Type::MacOS:
+        case Type::PlayCover:
+            return KeycodeSet::MacVirtual;
+        default:
+            return KeycodeSet::Win32Vk;
+        }
+    }
+    return KeycodeSet::Win32Vk;
+}
+
+bool normalize_hotkeys(
+    const MAA_PROJECT_INTERFACE_NS::InterfaceData::Option& definition,
+    MAA_PROJECT_INTERFACE_NS::Configuration::Option& option,
+    KeycodeSet set)
+{
+    auto normalized = option.hotkeys;
+    for (const auto& field : definition.hotkeys) {
+        const auto it = normalized.find(field.name);
+        const auto combo = parse(it == normalized.end() ? field.default_ : it->second, set);
+        if (!combo) {
+            return false;
+        }
+        normalized[field.name] = combo->canonical;
+    }
+    option.hotkeys = std::move(normalized);
+    return true;
+}
+
 namespace
 {
 // -1 means the key is not available on that platform's code table.

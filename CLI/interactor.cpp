@@ -2089,34 +2089,7 @@ bool Interactor::process_option(
     } break;
 
     case InterfaceData::Option::Type::Hotkey: {
-        // Resolve the key code table of the selected controller for validation.
-        MaaPiCliHotkey::KeycodeSet keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
-        const auto& iface_controllers = config_.interface_data().controller;
-        const auto ctrl_def_iter =
-            std::ranges::find_if(iface_controllers, [&](const auto& c) { return c.name == config_.configuration().controller.name; });
-        if (ctrl_def_iter != iface_controllers.end()) {
-            switch (ctrl_def_iter->type) {
-            case InterfaceData::Controller::Type::Win32:
-            case InterfaceData::Controller::Type::Gamepad:
-                keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
-                break;
-            case InterfaceData::Controller::Type::Linux:
-                keycode_set =
-                    ctrl_def_iter->lnx.use_win32_vk_code ? MaaPiCliHotkey::KeycodeSet::Win32Vk : MaaPiCliHotkey::KeycodeSet::LinuxEvdev;
-                break;
-            case InterfaceData::Controller::Type::Adb:
-            case InterfaceData::Controller::Type::IOS:
-                keycode_set = MaaPiCliHotkey::KeycodeSet::Android;
-                break;
-            case InterfaceData::Controller::Type::MacOS:
-            case InterfaceData::Controller::Type::PlayCover:
-                keycode_set = MaaPiCliHotkey::KeycodeSet::MacVirtual;
-                break;
-            default:
-                keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
-                break;
-            }
-        }
+        const auto keycode_set = MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration());
 
         std::cout << MAA_NS::utf8_to_crt(std::format("\n\n## Hotkey option \"{}\" for \"{}\" ##\n\n", opt_display_name, task_display_name));
         if (!opt.description.empty()) {
@@ -2126,11 +2099,12 @@ bool Interactor::process_option(
 
         for (const auto& hotkey_def : opt.hotkeys) {
             if (auto_accept_default) {
-                if (!MaaPiCliHotkey::parse(hotkey_def.default_, keycode_set)) {
-                    LogWarn << "Default hotkey combo is unresolvable on the selected controller" << VAR(option_name) << VAR(hotkey_def.name)
-                            << VAR(hotkey_def.default_);
+                auto combo = MaaPiCliHotkey::parse(hotkey_def.default_, keycode_set);
+                if (!combo) {
+                    std::cout << "Cannot accept an invalid default hotkey for the selected controller.\n";
+                    return false;
                 }
-                config_opt.hotkeys[hotkey_def.name] = hotkey_def.default_;
+                config_opt.hotkeys[hotkey_def.name] = combo->canonical;
                 continue;
             }
 
@@ -2734,6 +2708,11 @@ bool Interactor::ensure_declared_option_tree(
                     existing_option_iter->hotkeys.emplace(hotkey_def.name, hotkey_def.default_);
                 }
             }
+            if (!MaaPiCliHotkey::normalize_hotkeys(
+                    data_option, *existing_option_iter, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                LogError << "Invalid configured hotkey" << VAR(option_name);
+                return false;
+            }
         }
 
         std::vector<const InterfaceData::Option::Case*> selected_cases;
@@ -3028,6 +3007,11 @@ bool Interactor::apply_preset()
                         }
                         option.hotkeys.emplace(key, value.as_string());
                     }
+                    if (!MaaPiCliHotkey::normalize_hotkeys(
+                            data_option, option, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                        LogError << "Invalid preset hotkey combo" << VAR(preset_pretask.name) << VAR(option_name);
+                        return false;
+                    }
                     break;
                 }
                 item.option.emplace_back(std::move(option));
@@ -3118,6 +3102,11 @@ bool Interactor::apply_preset()
                             config_opt.hotkeys[k] = v.as_string();
                         }
                     }
+                }
+                if (!MaaPiCliHotkey::normalize_hotkeys(
+                        opt_iter->second, config_opt, MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {
+                    LogError << "Invalid preset hotkey combo" << VAR(preset_task.name) << VAR(opt_name);
+                    return false;
                 }
                 break;
             }

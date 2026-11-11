@@ -7,6 +7,8 @@
 #include <string>
 #include <vector>
 
+#include "ProjectInterface/Types.h"
+
 namespace MaaPiCliHotkey
 {
 enum class KeycodeSet
@@ -23,6 +25,15 @@ struct Combo
     int primary = -1;           // virtual key code of the primary key
     std::vector<int> modifiers; // 0..2 modifier codes, in combo order
 };
+
+// Resolve the table from the selected interface controller, including Linux's VK override.
+KeycodeSet keycode_set(const MAA_PROJECT_INTERFACE_NS::InterfaceData& data, const MAA_PROJECT_INTERFACE_NS::Configuration& config);
+
+// Validate every declared field (including defaults) and store canonical strings.
+bool normalize_hotkeys(
+    const MAA_PROJECT_INTERFACE_NS::InterfaceData::Option& definition,
+    MAA_PROJECT_INTERFACE_NS::Configuration::Option& option,
+    KeycodeSet set);
 
 // Split and resolve a combo string. Returns nullopt when a token is unknown
 // for the given keycode set. combo like "Ctrl+Shift+A"; last token is primary.
