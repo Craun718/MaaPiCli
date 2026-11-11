@@ -28,6 +28,7 @@
 #include "Common/MaaTypes.h"
 #include "MaaUtils/Encoding.h"
 #include "MaaUtils/Logger.h"
+#include "TerminalText.h"
 #include "MaaUtils/Platform.h"
 #include "MaaUtils/ScopeLeave.hpp"
 #include "MaaUtils/StringMisc.hpp"
@@ -98,15 +99,10 @@ void MAA_CALL on_tasker_event(void* /*view*/, const char* message, const char* d
         }
     }
 
-    // Strip terminal control sequences: focus content comes from project
-    // resources and must not be able to manipulate the terminal or spoof CLI
-    // output via escape sequences.
-    const auto sanitize = [](std::string& text) {
-        text.erase(std::remove_if(text.begin(), text.end(), [](unsigned char c) { return c == 0x1b || c < 0x20; }), text.end());
-    };
-    sanitize(content);
+    // Preserve message formatting while removing complete terminal commands.
+    content = MaaPiCliTerminal::sanitize(content, true);
     for (auto& channel : display_channels) {
-        sanitize(channel);
+        channel = MaaPiCliTerminal::sanitize(channel);
     }
 
     for (const auto& channel : display_channels) {

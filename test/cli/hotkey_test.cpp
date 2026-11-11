@@ -96,6 +96,9 @@ int main()
     require(MaaPiCliTerminal::sanitize("\x1b]title\x1b\\A") == "A", "ST-terminated OSC should be removed");
     require(MaaPiCliTerminal::sanitize("A\n\tB\r\b") == "AB", "single-line hotkey text should not inject formatting");
     require(MaaPiCliTerminal::sanitize("快捷键") == "快捷键", "UTF-8 text should be preserved");
+    require(
+        MaaPiCliTerminal::sanitize("第一行\n\t\x1b[31m第二行\x1b[0m\r\b", true) == "第一行\n\t第二行",
+        "multiline focus messages should retain line breaks and tabs while removing controls");
     for (bool pretask : { false, true }) {
         check_preset(pretask, json::object { { "combo", "control+e" } }, "Ctrl+E", true);
         check_preset(pretask, json::object { { "combo", "NoSuchKey" } }, "Ctrl+E", false);
