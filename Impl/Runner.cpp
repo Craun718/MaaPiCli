@@ -36,6 +36,78 @@ MAA_PROJECT_INTERFACE_NS_BEGIN
 namespace
 {
 
+// v2.3.0 / v2.9.1: resolve pipeline `focus` message templates from tasker
+// notifications. CLI degrades every display channel to console output with a
+// channel prefix; `modal` cannot truly pause the pipeline in a CLI, so the
+// message is printed prominently instead.
+void MAA_CALL on_tasker_event(void* /*view*/, const char* message, const char* details_json, void* /*trans_arg*/)
+{
+    if (!message || !details_json) {
+        return;
+    }
+
+    auto details = json::parse(details_json);
+    if (!details || !details->is_object() || !details->contains("focus")) {
+        return;
+    }
+    const auto& focus = details->at("focus");
+    if (!focus.is_object() || !focus.contains(message)) {
+        return;
+    }
+
+    const auto& template_value = focus.at(message);
+    std::string content;
+    std::vector<std::string> display_channels = { "log" };
+    if (template_value.is_string()) {
+        content = template_value.as_string();
+    }
+    else if (template_value.is_object()) {
+        if (template_value.contains("content") && template_value.at("content").is_string()) {
+            content = template_value.at("content").as_string();
+        }
+        if (template_value.contains("display")) {
+            const auto& display = template_value.at("display");
+            if (display.is_string()) {
+                display_channels = { display.as_string() };
+            }
+            else if (display.is_array()) {
+                display_channels.clear();
+                for (const auto& channel : display.as_array()) {
+                    if (channel.is_string()) {
+                        display_channels.push_back(channel.as_string());
+                    }
+                }
+            }
+        }
+        // `trace` (v2.9.1) only affects telemetry upload; MaaPiCli has no telemetry, skip it.
+    }
+
+    if (content.empty()) {
+        return;
+    }
+
+    // Replace {placeholder} with values from the notification details.
+    if (details->is_object()) {
+        for (const auto& [key, value] : details->as_object()) {
+            if (key == "focus") {
+                continue;
+            }
+            std::string text = value.is_string() ? value.as_string() : value.dumps();
+            MaaNS::string_replace_all(content, "{" + key + "}", text);
+        }
+    }
+
+    for (const auto& channel : display_channels) {
+        const std::string line = MAA_NS::utf8_to_crt(std::format("[focus:{}] {}", channel, content));
+        if (channel == "log") {
+            LogInfo << content;
+        }
+        else {
+            std::cout << "\n" << line << "\n" << std::flush;
+        }
+    }
+}
+
 #ifdef _WIN32
 std::wstring quote_argument(const std::wstring& arg)
 {
@@ -548,6 +620,9 @@ bool Runner::run(const RuntimeParam& param)
 
     MaaTasker* tasker_handle = MaaTaskerCreate();
     MaaResource* resource_handle = MaaResourceCreate();
+
+    // v2.3.0: focus message templates arrive through tasker notifications.
+    MaaTaskerAddSink(tasker_handle, &on_tasker_event, nullptr);
 
     OnScopeLeave([&]() {
         MaaTaskerDestroy(tasker_handle);
