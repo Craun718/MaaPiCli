@@ -147,6 +147,7 @@ bool validate_task_option_selection(
     } break;
 
     case InterfaceData::Option::Type::Input:
+    case InterfaceData::Option::Type::Hotkey:
         break;
     }
 
@@ -681,6 +682,21 @@ bool Parser::check_configuration(const InterfaceData& data, Configuration& confi
                     else {
                         LogWarn << "Input not found in interface, removing from config" << VAR(it->name) << VAR(input_name);
                         input_it = it->inputs.erase(input_it);
+                        erased = true;
+                    }
+                }
+                break;
+            case InterfaceData::Option::Type::Hotkey:
+                for (auto hotkey_it = it->hotkeys.begin(); hotkey_it != it->hotkeys.end();) {
+                    const auto& hotkey_name = hotkey_it->first;
+                    const bool found =
+                        std::ranges::any_of(data_option.hotkeys, [&](const auto& hotkey) { return hotkey.name == hotkey_name; });
+                    if (found) {
+                        ++hotkey_it;
+                    }
+                    else {
+                        LogWarn << "Hotkey not found in interface, removing from config" << VAR(it->name) << VAR(hotkey_name);
+                        hotkey_it = it->hotkeys.erase(hotkey_it);
                         erased = true;
                     }
                 }

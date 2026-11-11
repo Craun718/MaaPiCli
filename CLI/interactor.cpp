@@ -20,6 +20,7 @@
 #include <unistd.h>
 #endif
 
+#include "HotkeyMap.h"
 #include "MaaFramework/Utility/MaaBuffer.h"
 #include "MaaToolkit/AdbDevice/MaaToolkitAdbDevice.h"
 #include "MaaToolkit/DesktopWindow/MaaToolkitDesktopWindow.h"
@@ -439,6 +440,12 @@ void Interactor::print_config()
                 for (const auto& [key, val] : opt.inputs) {
                     std::cout << "\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(display_input_value(opt.name, key, val))
                               << "\n";
+                }
+            }
+            else if (!opt.hotkeys.empty()) {
+                std::cout << "\t" << MAA_NS::utf8_to_crt(opt.name) << ":\n";
+                for (const auto& [key, val] : opt.hotkeys) {
+                    std::cout << "\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(val) << "\n";
                 }
             }
         }
@@ -2080,6 +2087,84 @@ bool Interactor::process_option(
         }
         std::cout << "\n";
     } break;
+
+    case InterfaceData::Option::Type::Hotkey: {
+        // Resolve the key code table of the selected controller for validation.
+        MaaPiCliHotkey::KeycodeSet keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
+        const auto& iface_controllers = config_.interface_data().controller;
+        const auto ctrl_def_iter =
+            std::ranges::find_if(iface_controllers, [&](const auto& c) { return c.name == config_.configuration().controller.name; });
+        if (ctrl_def_iter != iface_controllers.end()) {
+            switch (ctrl_def_iter->type) {
+            case InterfaceData::Controller::Type::Win32:
+            case InterfaceData::Controller::Type::Gamepad:
+                keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
+                break;
+            case InterfaceData::Controller::Type::Linux:
+                keycode_set =
+                    ctrl_def_iter->lnx.use_win32_vk_code ? MaaPiCliHotkey::KeycodeSet::Win32Vk : MaaPiCliHotkey::KeycodeSet::LinuxEvdev;
+                break;
+            case InterfaceData::Controller::Type::Adb:
+            case InterfaceData::Controller::Type::IOS:
+                keycode_set = MaaPiCliHotkey::KeycodeSet::Android;
+                break;
+            case InterfaceData::Controller::Type::MacOS:
+            case InterfaceData::Controller::Type::PlayCover:
+                keycode_set = MaaPiCliHotkey::KeycodeSet::MacVirtual;
+                break;
+            default:
+                keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
+                break;
+            }
+        }
+
+        std::cout << MAA_NS::utf8_to_crt(std::format("\n\n## Hotkey option \"{}\" for \"{}\" ##\n\n", opt_display_name, task_display_name));
+        if (!opt.description.empty()) {
+            std::string desc_text = read_text_content(opt.description);
+            std::cout << MAA_NS::utf8_to_crt(desc_text) << "\n\n";
+        }
+
+        for (const auto& hotkey_def : opt.hotkeys) {
+            if (auto_accept_default) {
+                config_opt.hotkeys[hotkey_def.name] = hotkey_def.default_;
+                continue;
+            }
+
+            std::string hotkey_display_name = get_display_name(hotkey_def.name, hotkey_def.label);
+            if (!hotkey_def.description.empty()) {
+                std::string hotkey_desc = read_text_content(hotkey_def.description);
+                std::cout << MAA_NS::utf8_to_crt(hotkey_desc) << "\n";
+            }
+            std::cout << MAA_NS::utf8_to_crt(
+                std::format("{} [{}] (e.g. Ctrl+Alt+F1, press Enter to keep): ", hotkey_display_name, hotkey_def.default_));
+
+            auto buffer = read_line();
+            if (!buffer) {
+                input_aborted_ = true;
+                return false;
+            }
+
+            std::string value = buffer->empty() ? hotkey_def.default_ : *buffer;
+
+            // Normalize and validate the combo; retry until it resolves on the current platform.
+            while (true) {
+                if (auto parts = MaaPiCliHotkey::parse(value, keycode_set)) {
+                    value = parts->canonical;
+                    break;
+                }
+                std::cout << MAA_NS::utf8_to_crt(std::format("Invalid hotkey \"{}\", please retry: ", value));
+                buffer = read_line();
+                if (!buffer) {
+                    input_aborted_ = true;
+                    return false;
+                }
+                value = buffer->empty() ? hotkey_def.default_ : *buffer;
+            }
+
+            config_opt.hotkeys[hotkey_def.name] = value;
+        }
+        std::cout << "\n";
+    } break;
     }
 
     std::vector<Configuration::Option> nested_options;
@@ -2224,6 +2309,12 @@ void Interactor::print_config_tasks(bool with_index) const
                 for (const auto& [key, val] : opt.inputs) {
                     std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(key) << ": "
                               << MAA_NS::utf8_to_crt(display_input_value(opt.name, key, val)) << "\n";
+                }
+            }
+            else if (!opt.hotkeys.empty()) {
+                std::cout << "\t\t- " << MAA_NS::utf8_to_crt(opt.name) << ":\n";
+                for (const auto& [key, val] : opt.hotkeys) {
+                    std::cout << "\t\t\t" << MAA_NS::utf8_to_crt(key) << ": " << MAA_NS::utf8_to_crt(val) << "\n";
                 }
             }
         }
@@ -2630,6 +2721,13 @@ bool Interactor::ensure_declared_option_tree(
             for (const auto& input_def : data_option.inputs) {
                 if (!existing_option_iter->inputs.contains(input_def.name)) {
                     existing_option_iter->inputs.emplace(input_def.name, input_def.default_);
+                }
+            }
+        }
+        else if (data_option.type == InterfaceData::Option::Type::Hotkey) {
+            for (const auto& hotkey_def : data_option.hotkeys) {
+                if (!existing_option_iter->hotkeys.contains(hotkey_def.name)) {
+                    existing_option_iter->hotkeys.emplace(hotkey_def.name, hotkey_def.default_);
                 }
             }
         }

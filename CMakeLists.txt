@@ -17,6 +17,7 @@ set(maa_pi_cli_core_src
     CLI/interactor.cpp
     CLI/interactor.h
     Impl/Configurator.cpp
+    Impl/HotkeyMap.cpp
     Impl/Parser.cpp
     Impl/Runner.cpp
     Impl/SecretStore.cpp
@@ -30,7 +31,8 @@ target_include_directories(
     MaaPiCliCore
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-           $<INSTALL_INTERFACE:include>)
+           $<INSTALL_INTERFACE:include>
+    PRIVATE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Impl>)
 
 target_compile_features(MaaPiCliCore PUBLIC cxx_std_20)
 target_link_libraries(

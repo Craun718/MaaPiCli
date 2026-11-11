@@ -30,6 +30,7 @@
 #include <unistd.h>
 #endif
 
+#include "HotkeyMap.h"
 #include "MaaFramework/Utility/MaaUtility.h"
 #include "MaaUtils/Logger.h"
 #include "MaaUtils/Platform.h"
@@ -2111,6 +2112,79 @@ void Configurator::merge_option_overrides(RuntimeParam::Task& runtime_task, cons
             }
             else {
                 LogWarn << "Failed to parse pipeline override JSON for input option" << VAR(config_option.name);
+            }
+        } break;
+
+        case InterfaceData::Option::Type::Hotkey: {
+            // Key code table follows the controller family of the selected controller.
+            const auto interface_ctrl_iter =
+                std::ranges::find_if(data_.controller, [&](const auto& c) { return c.name == config_.controller.name; });
+            auto keycode_set = MaaPiCliHotkey::KeycodeSet::Win32Vk;
+            bool use_win32_vk = false;
+            if (interface_ctrl_iter != data_.controller.end()) {
+                using MaaPiCliHotkey::KeycodeSet;
+                switch (interface_ctrl_iter->type) {
+                case InterfaceData::Controller::Type::Win32:
+                case InterfaceData::Controller::Type::Gamepad:
+                    keycode_set = KeycodeSet::Win32Vk;
+                    break;
+                case InterfaceData::Controller::Type::Linux:
+                    use_win32_vk = interface_ctrl_iter->lnx.use_win32_vk_code;
+                    keycode_set = use_win32_vk ? KeycodeSet::Win32Vk : KeycodeSet::LinuxEvdev;
+                    break;
+                case InterfaceData::Controller::Type::Adb:
+                case InterfaceData::Controller::Type::IOS:
+                    keycode_set = KeycodeSet::Android;
+                    break;
+                case InterfaceData::Controller::Type::MacOS:
+                case InterfaceData::Controller::Type::PlayCover:
+                    keycode_set = KeycodeSet::MacVirtual;
+                    break;
+                default:
+                    keycode_set = KeycodeSet::Win32Vk;
+                    break;
+                }
+            }
+
+            std::string override_str = data_option.pipeline_override.dumps();
+            for (const auto& hotkey_def : data_option.hotkeys) {
+                std::string combo;
+                if (auto it = config_option.hotkeys.find(hotkey_def.name); it != config_option.hotkeys.end()) {
+                    combo = it->second;
+                }
+                else {
+                    combo = hotkey_def.default_;
+                }
+
+                auto parts = MaaPiCliHotkey::parse(combo, keycode_set);
+                if (!parts) {
+                    LogWarn << "Unresolvable hotkey combo, skip placeholder replacement" << VAR(config_option.name) << VAR(hotkey_def.name)
+                            << VAR(combo);
+                    continue;
+                }
+
+                // v2.8.0: hotkey placeholders are replaced with a single integer key code.
+                auto replace_with_code = [&](std::string_view placeholder, int code) {
+                    const std::string value = std::to_string(code);
+                    MaaNS::string_replace_all(override_str, std::string("\"{") + std::string(placeholder) + "}\"", value);
+                    MaaNS::string_replace_all(override_str, std::string("{") + std::string(placeholder) + "}", value);
+                };
+
+                const std::string name = hotkey_def.name;
+                replace_with_code(name + ".primary", parts->primary);
+                if (parts->modifiers.size() > 0) {
+                    replace_with_code(name + ".modifier1", parts->modifiers[0]);
+                }
+                if (parts->modifiers.size() > 1) {
+                    replace_with_code(name + ".modifier2", parts->modifiers[1]);
+                }
+                replace_with_code(name, parts->primary);
+            }
+            if (auto parsed = json::parse(override_str)) {
+                runtime_task.pipeline_override.emplace(parsed->as_object());
+            }
+            else {
+                LogWarn << "Failed to parse pipeline override JSON for hotkey option" << VAR(config_option.name);
             }
         } break;
         }
