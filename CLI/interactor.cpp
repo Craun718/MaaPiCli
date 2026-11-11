@@ -2126,6 +2126,10 @@ bool Interactor::process_option(
 
         for (const auto& hotkey_def : opt.hotkeys) {
             if (auto_accept_default) {
+                if (!MaaPiCliHotkey::parse(hotkey_def.default_, keycode_set)) {
+                    LogWarn << "Default hotkey combo is unresolvable on the selected controller" << VAR(opt.name)
+                            << VAR(hotkey_def.name) << VAR(hotkey_def.default_);
+                }
                 config_opt.hotkeys[hotkey_def.name] = hotkey_def.default_;
                 continue;
             }
@@ -3012,6 +3016,21 @@ bool Interactor::apply_preset()
                     }
                     break;
                 }
+                case InterfaceData::Option::Type::Hotkey:
+                    if (!option_value.is_object()) {
+                        LogError << "Invalid preset hotkey value" << VAR(preset_pretask.name) << VAR(option_name);
+                        return false;
+                    }
+                    for (const auto& [key, value] : option_value.as_object()) {
+                        auto hotkey = std::ranges::find(data_option.hotkeys, key, &InterfaceData::Option::Hotkey::name);
+                        if (hotkey == data_option.hotkeys.end() || !value.is_string()) {
+                            LogError << "Invalid preset hotkey" << VAR(preset_pretask.name) << VAR(option_name) << VAR(key);
+                            return false;
+                        }
+                        option.hotkeys.emplace(key, value.as_string());
+                    }
+                    break;
+                }
                 item.option.emplace_back(std::move(option));
             }
 
@@ -3089,6 +3108,15 @@ bool Interactor::apply_preset()
                     for (const auto& [k, v] : opt_value.as_object()) {
                         if (v.is_string()) {
                             config_opt.inputs[k] = v.as_string();
+                        }
+                    }
+                }
+                break;
+            case InterfaceData::Option::Type::Hotkey:
+                if (opt_value.is_object()) {
+                    for (const auto& [k, v] : opt_value.as_object()) {
+                        if (v.is_string()) {
+                            config_opt.hotkeys[k] = v.as_string();
                         }
                     }
                 }
