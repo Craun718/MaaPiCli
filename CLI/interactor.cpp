@@ -31,6 +31,7 @@
 #include "ProjectInterface/Parser.h"
 #include "ProjectInterface/Runner.h"
 #include "TerminalText.h"
+#include "TextFile.h"
 #include "input.h"
 
 #if defined(__APPLE__)
@@ -3217,13 +3218,8 @@ std::string Interactor::read_text_content(const std::string& text) const
         return translated;
     }
 
-    if (std::filesystem::is_regular_file(file_path, ec) && !ec) {
-        std::ifstream ifs(file_path);
-        if (ifs.is_open()) {
-            std::stringstream buffer;
-            buffer << ifs.rdbuf();
-            return buffer.str();
-        }
+    if (auto content = MaaPiCliText::read_canonical_file(file_path)) {
+        return std::move(*content);
     }
 
     // 不是文件，直接返回翻译后的文本

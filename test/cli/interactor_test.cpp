@@ -1,3 +1,4 @@
+#include "CLI/TextFile.h"
 #include "CLI/interactor.h"
 
 #include "MaaUtils/Platform.h"
@@ -214,6 +215,49 @@ void test_path_inputs_and_agent_environment(const std::filesystem::path& fixture
     std::filesystem::remove_all(user_dir.parent_path());
 }
 
+void test_text_content_link_replacement()
+{
+    const auto root = unique_temp_directory();
+    const auto resource = root / "resource";
+    const auto outside = root / "outside";
+    std::filesystem::create_directories(resource / "docs");
+    std::filesystem::create_directories(outside);
+    std::ofstream(resource / "docs/text.txt") << "safe text\n";
+    std::ofstream(outside / "text.txt") << "outside secret";
+    const auto resolved = std::filesystem::canonical(resource / "docs/text.txt");
+    require(MaaPiCliText::read_canonical_file(resolved) == "safe text\n", "the checked file handle should return normal text");
+
+    // Simulate replacement after canonicalization/boundary validation, before opening.
+    std::filesystem::rename(resource / "docs/text.txt", resource / "docs/original.txt");
+    std::error_code ec;
+    std::filesystem::create_symlink(outside / "text.txt", resource / "docs/text.txt", ec);
+    if (ec) {
+#ifdef _WIN32
+        std::cerr << "SKIPPED: replacement symlink fixtures: " << ec.message() << '\n';
+#else
+        require(false, "replacement symlink fixture should be created: " + ec.message());
+#endif
+        std::filesystem::remove_all(root);
+        return;
+    }
+    require(!MaaPiCliText::read_canonical_file(resolved), "a file replaced by a symlink after validation must not be read");
+    std::filesystem::remove(resource / "docs/text.txt");
+    std::filesystem::rename(resource / "docs/original.txt", resource / "docs/text.txt");
+
+    std::filesystem::rename(resource / "docs", resource / "original-docs");
+    std::filesystem::create_directory_symlink(outside, resource / "docs");
+    require(!MaaPiCliText::read_canonical_file(resolved), "a parent directory replaced after validation must not be followed");
+    std::filesystem::remove(resource / "docs");
+    std::filesystem::rename(resource / "original-docs", resource / "docs");
+
+    std::filesystem::rename(resource, root / "original-resource");
+    std::filesystem::create_directories(outside / "docs");
+    std::ofstream(outside / "docs/text.txt") << "outside root secret";
+    std::filesystem::create_directory_symlink(outside, resource);
+    require(!MaaPiCliText::read_canonical_file(resolved), "a resource root replaced after validation must not be followed");
+    std::filesystem::remove_all(root);
+}
+
 void test_text_content_path_boundaries()
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
@@ -424,6 +468,7 @@ int main(int argc, char** argv)
 {
     if (argc == 2 && std::string_view(argv[1]) == "--text-content-only") {
         test_text_content_path_boundaries();
+        test_text_content_link_replacement();
         return failures == 0 ? 0 : 1;
     }
 
@@ -431,6 +476,7 @@ int main(int argc, char** argv)
     test_preset_controller_filter(fixture_dir.parent_path() / "pi_extensions");
     test_path_inputs_and_agent_environment(fixture_dir.parent_path() / "pi_extensions");
     test_text_content_path_boundaries();
+    test_text_content_link_replacement();
 
     const auto interface = MAA_PROJECT_INTERFACE_NS::Parser::parse_interface(fixture_dir / "interface.json");
     require(interface.has_value() && interface->controller.size() == 2, "the EOF fixture should contain two controllers");

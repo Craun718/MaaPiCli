@@ -16,6 +16,7 @@ set(maa_pi_cli_core_src
     CLI/input.h
     CLI/interactor.cpp
     CLI/interactor.h
+    CLI/TextFile.h
     Impl/Configurator.cpp
     Impl/HotkeyMap.cpp
     Impl/Parser.cpp
