@@ -91,6 +91,7 @@ private:
     void print_config_tasks(bool with_index = true) const;
 
     bool check_validity();
+    bool check_macos_window();
 
     bool save_config();
 

@@ -115,6 +115,12 @@ CLI 可组合以下 Linux 截图和输入方式：
 
 `controller.linux.use_win32_vk_code` 可把 Win32 Virtual-Key 键码转换为 Linux evdev 键码。Linux 运行环境仍需按 MaaFramework 文档准备 Wayland、PipeWire、Portal、libei 或 uinput 相关权限和服务。
 
+## macOS 控制器
+
+macOS 控制器会在所选 `pretask` 执行完成后，确认已保存的 `macos.window_id` 仍在当前窗口列表中，再用它恢复连接；每个 pretask 在本次运行中只执行一次。`macos.title` 可以为空：隐藏标题栏的窗口也可能没有标题，`-d` 运行不会因此再次要求选择窗口。窗口 ID 缺失或已失效时，使用配置的标题正则重新选择；未配置正则时会提示输入，`^$` 可匹配空标题。重新选择后的 ID 会用于实际控制器并保存到配置。pretask 失败、取消或选择失败会停止本次运行，并保留原配置。
+
+如果 pretask 负责启动应用或重建窗口，应等待窗口准备就绪后退出。
+
 ## iOS 控制器
 
 需要使用包含 iOS 控制器的 MaaFramework SDK 与运行库，并安装 xdb Server 1.6.0 或更新版本。安装步骤见 [XDeviceBridge 文档](https://github.com/scrctl/XDeviceBridge/blob/main/docs/INSTALL_zh.md)。
