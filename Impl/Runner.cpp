@@ -683,15 +683,24 @@ bool Runner::run(const RuntimeParam& param)
     // PI v2.6.0: 校验值基于 resource.path，必须在 attach_resource_path 之前获取。
     if (!param.resource_hash.empty()) {
         auto expected_hash = param.resource_hash;
-        auto* hash_buffer = MaaStringBufferCreate();
-        MaaResourceGetHash(resource_handle, hash_buffer);
-        std::string actual_hash = MaaStringBufferGet(hash_buffer);
-        MaaStringBufferDestroy(hash_buffer);
-        tolowers_(expected_hash);
-        tolowers_(actual_hash);
+        std::string actual_hash;
+        if (auto* hash_buffer = MaaStringBufferCreate()) {
+            if (MaaResourceGetHash(resource_handle, hash_buffer)) {
+                actual_hash = MaaStringBufferGet(hash_buffer);
+            }
+            MaaStringBufferDestroy(hash_buffer);
+        }
 
-        if (expected_hash != actual_hash) {
-            LogWarn << "Resource hash mismatch" << VAR(param.resource_hash) << VAR(actual_hash);
+        if (actual_hash.empty()) {
+            LogError << "Failed to get resource hash" << VAR(param.resource_hash);
+        }
+        else {
+            tolowers_(expected_hash);
+            tolowers_(actual_hash);
+
+            if (expected_hash != actual_hash) {
+                LogWarn << "Resource hash mismatch" << VAR(param.resource_hash) << VAR(actual_hash);
+            }
         }
     }
 
@@ -754,19 +763,28 @@ bool Runner::run(const RuntimeParam& param)
         agents.emplace_back(agent);
     }
 
+    bool task_post_failed = false;
     MaaId tid = 0;
     for (const auto& task : param.task) {
-        tid = MaaTaskerPostTask(tasker_handle, task.entry.c_str(), task.pipeline_override.dumps().c_str());
+        const std::string pipeline_override = task.pipeline_override.dumps();
+        tid = MaaTaskerPostTask(tasker_handle, task.entry.c_str(), pipeline_override.c_str());
+        if (tid == MaaInvalidId) {
+            LogError << "Failed to post task" << VAR(task.name) << VAR(task.entry);
+            task_post_failed = true;
+            break;
+        }
     }
 
-    MaaTaskerWait(tasker_handle, tid);
+    if (!task_post_failed) {
+        MaaTaskerWait(tasker_handle, tid);
+    }
 
     for (auto* agent : agents) {
         MaaAgentClientDisconnect(agent);
         MaaAgentClientDestroy(agent);
     }
 
-    return true;
+    return !task_post_failed;
 }
 
 bool Runner::run_pretasks(const std::vector<RuntimeParam::Pretask>& pretasks)
