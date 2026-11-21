@@ -200,6 +200,13 @@ bool restart_self_as_admin()
     return ret > kShellExecuteSuccessThreshold;
 }
 #endif
+
+const MAA_PROJECT_INTERFACE_NS::Configuration::Option*
+    find_config_option(const std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& options, const std::string& name)
+{
+    auto iter = std::ranges::find(options, name, std::mem_fn(&MAA_PROJECT_INTERFACE_NS::Configuration::Option::name));
+    return iter == options.end() ? nullptr : &(*iter);
+}
 } // namespace
 
 Interactor::Interactor(std::filesystem::path user_path)
@@ -240,6 +247,9 @@ bool Interactor::interact()
     while (true) {
         print_config();
         const auto status = interact_once();
+        if (status == ActionStatus::Failed) {
+            return false;
+        }
         if (status == ActionStatus::Aborted || status == ActionStatus::Exit) {
             return true;
         }
@@ -618,19 +628,20 @@ Interactor::ActionStatus Interactor::interact_once()
     std::cout << "\t1. Switch controller\n";
     std::cout << "\t2. Switch resource\n";
     std::cout << "\t3. Add task\n";
-    std::cout << "\t4. Move task\n";
-    std::cout << "\t5. Delete task\n";
-    std::cout << "\t6. Run tasks\n";
+    std::cout << "\t4. Edit task\n";
+    std::cout << "\t5. Move task\n";
+    std::cout << "\t6. Delete task\n";
+    std::cout << "\t7. Run tasks\n";
     if (has_presets) {
-        std::cout << "\t7. Apply preset\n";
-        std::cout << "\t8. Exit\n";
+        std::cout << "\t8. Apply preset\n";
+        std::cout << "\t9. Exit\n";
     }
     else {
-        std::cout << "\t7. Exit\n";
+        std::cout << "\t8. Exit\n";
     }
     std::cout << "\n";
 
-    int max_action = has_presets ? 8 : 7;
+    int max_action = has_presets ? 9 : 8;
     auto selected_action = input(max_action);
     if (!selected_action) {
         input_aborted_ = true;
@@ -646,24 +657,30 @@ Interactor::ActionStatus Interactor::interact_once()
     case 3:
         return action_status(add_task());
     case 4:
-        return action_status(move_task());
+        edit_task();
+        if (!save_config()) {
+            return ActionStatus::Failed;
+        }
+        return input_aborted_ ? ActionStatus::Aborted : ActionStatus::Incomplete;
     case 5:
+        return action_status(move_task());
+    case 6:
         return action_status(delete_task());
-    case 6: {
+    case 7: {
         const bool completed = run();
         if (!mpause()) {
             return ActionStatus::Aborted;
         }
         return completed ? ActionStatus::Complete : ActionStatus::Incomplete;
     }
-    case 7:
+    case 8:
         if (has_presets) {
             return action_status(apply_preset());
         }
         else {
             return ActionStatus::Exit;
         }
-    case 8:
+    case 9:
         if (has_presets) {
             return ActionStatus::Exit;
         }
@@ -1711,7 +1728,8 @@ bool Interactor::process_option(
     const std::string& option_name,
     const std::string& task_display_name,
     std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
-    bool auto_accept_default)
+    bool auto_accept_default,
+    const std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>* current_options)
 {
     using namespace MAA_PROJECT_INTERFACE_NS;
 
@@ -1732,6 +1750,7 @@ bool Interactor::process_option(
 
     Configuration::Option config_opt;
     config_opt.name = option_name;
+    const Configuration::Option* current_config_opt = current_options ? find_config_option(*current_options, option_name) : nullptr;
 
     std::string opt_display_name = get_display_name(option_name, opt.label);
 
@@ -1750,6 +1769,13 @@ bool Interactor::process_option(
             LogWarn << "default_case not found in cases, ignoring it" << VAR(option_name) << VAR(*str);
         }
     }
+    const InterfaceData::Option::Case* initial_case_ptr = default_case_ptr;
+    if (current_config_opt && (opt.type == InterfaceData::Option::Type::Select || opt.type == InterfaceData::Option::Type::Switch)) {
+        auto current_case_iter = std::ranges::find(opt.cases, current_config_opt->value, std::mem_fn(&InterfaceData::Option::Case::name));
+        if (current_case_iter != opt.cases.end()) {
+            initial_case_ptr = &(*current_case_iter);
+        }
+    }
 
     switch (opt.type) {
     case InterfaceData::Option::Type::Select: {
@@ -1758,9 +1784,9 @@ bool Interactor::process_option(
             return false;
         }
 
-        if (default_case_ptr && auto_accept_default) {
-            config_opt.value = default_case_ptr->name;
-            selected_cases.push_back(default_case_ptr);
+        if (initial_case_ptr && auto_accept_default) {
+            config_opt.value = initial_case_ptr->name;
+            selected_cases.push_back(initial_case_ptr);
             break;
         }
 
@@ -1774,7 +1800,7 @@ bool Interactor::process_option(
         for (size_t i = 0; i < opt.cases.size(); ++i) {
             const auto& case_item = opt.cases[i];
             std::string case_display_name = get_display_name(case_item.name, case_item.label);
-            const bool is_default = default_case_ptr == &case_item;
+            const bool is_default = initial_case_ptr == &case_item;
             if (is_default) {
                 default_index = i + 1;
             }
@@ -1822,9 +1848,9 @@ bool Interactor::process_option(
         const auto* yes_case = find_named_case(yes_names);
         const auto* no_case = find_named_case(no_names);
 
-        if (default_case_ptr && auto_accept_default) {
-            config_opt.value = default_case_ptr->name;
-            selected_cases.push_back(default_case_ptr);
+        if (initial_case_ptr && auto_accept_default) {
+            config_opt.value = initial_case_ptr->name;
+            selected_cases.push_back(initial_case_ptr);
             break;
         }
 
@@ -1843,7 +1869,7 @@ bool Interactor::process_option(
             for (size_t i = 0; i < opt.cases.size(); ++i) {
                 const auto& case_item = opt.cases[i];
                 std::string case_display_name = get_display_name(case_item.name, case_item.label);
-                const bool is_default = default_case_ptr == &case_item;
+                const bool is_default = initial_case_ptr == &case_item;
                 if (is_default) {
                     fallback_default_index = i + 1;
                 }
@@ -1879,7 +1905,7 @@ bool Interactor::process_option(
         std::cout << "\n";
 
         // default_case 只在能被 Y/N 表达时作为预选值（指向第三个 case 时忽略）
-        const auto* default_yn_case = (default_case_ptr == yes_case || default_case_ptr == no_case) ? default_case_ptr : nullptr;
+        const auto* default_yn_case = (initial_case_ptr == yes_case || initial_case_ptr == no_case) ? initial_case_ptr : nullptr;
         if (default_yn_case) {
             std::cout << std::format("Input Y/N (default {}): ", default_yn_case == yes_case ? "Y" : "N");
         }
@@ -1934,12 +1960,26 @@ bool Interactor::process_option(
         // 与 select/switch 一致：default_case 只作为「初始选中值」解析成预选编号（1-based），
         // 交互流程中列出 cases（预选标 [x]，回车即保持预选）；仅自动补全流程直接采用。
         std::vector<int> default_indexes;
-        if (auto* vec = std::get_if<std::vector<std::string>>(&opt.default_case); vec && !vec->empty()) {
-            for (const auto& default_name : *vec) {
+        const std::vector<std::string>* initial_values = nullptr;
+        if (current_config_opt && selection_count_valid(current_config_opt->values)) {
+            const bool all_values_valid = std::ranges::all_of(current_config_opt->values, [&](const auto& value) {
+                return std::ranges::find(opt.cases, value, std::mem_fn(&InterfaceData::Option::Case::name)) != opt.cases.end();
+            });
+            if (all_values_valid) {
+                initial_values = &current_config_opt->values;
+            }
+        }
+        if (!initial_values) {
+            if (auto* vec = std::get_if<std::vector<std::string>>(&opt.default_case); vec && !vec->empty()) {
+                initial_values = vec;
+            }
+        }
+        if (initial_values) {
+            for (const auto& default_name : *initial_values) {
                 auto case_iter = std::ranges::find(opt.cases, default_name, std::mem_fn(&InterfaceData::Option::Case::name));
                 if (case_iter == opt.cases.end()) {
                     // 旧实现会把不存在的名字直接写进配置，随后被 check_task 判定失效而删掉整个任务
-                    LogWarn << "default_case not found in cases, ignoring it" << VAR(option_name) << VAR(default_name);
+                    LogWarn << "initial value not found in cases, ignoring it" << VAR(option_name) << VAR(default_name);
                     continue;
                 }
                 // 记录 1-based 预选编号，按 cases 顺序排序，与 Configurator 的应用顺序保持一致
@@ -2054,6 +2094,11 @@ bool Interactor::process_option(
             }
 
             std::string default_val = input_def.default_;
+            if (current_config_opt) {
+                if (auto value_iter = current_config_opt->inputs.find(input_def.name); value_iter != current_config_opt->inputs.end()) {
+                    default_val = value_iter->second;
+                }
+            }
             std::string input_display_name = get_display_name(input_def.name, input_def.label);
             if (!input_def.description.empty()) {
                 std::string input_desc = read_text_content(input_def.description);
@@ -2138,6 +2183,12 @@ bool Interactor::process_option(
                 continue;
             }
 
+            std::string initial_value = hotkey_def.default_;
+            if (current_config_opt) {
+                if (auto iter = current_config_opt->hotkeys.find(hotkey_def.name); iter != current_config_opt->hotkeys.end()) {
+                    initial_value = iter->second;
+                }
+            }
             std::string hotkey_display_name = get_display_name(hotkey_def.name, hotkey_def.label);
             if (!hotkey_def.description.empty()) {
                 std::string hotkey_desc = read_text_content(hotkey_def.description);
@@ -2147,7 +2198,7 @@ bool Interactor::process_option(
                 std::format(
                     "{} [{}] (e.g. Ctrl+Alt+F1, press Enter to keep): ",
                     MaaPiCliTerminal::sanitize(hotkey_display_name),
-                    MaaPiCliTerminal::sanitize(hotkey_def.default_)));
+                    MaaPiCliTerminal::sanitize(initial_value)));
 
             auto buffer = read_line();
             if (!buffer) {
@@ -2155,7 +2206,7 @@ bool Interactor::process_option(
                 return false;
             }
 
-            std::string value = buffer->empty() ? hotkey_def.default_ : *buffer;
+            std::string value = buffer->empty() ? initial_value : *buffer;
 
             // Normalize and validate the combo; retry until it resolves on the current platform.
             while (true) {
@@ -2169,7 +2220,7 @@ bool Interactor::process_option(
                     input_aborted_ = true;
                     return false;
                 }
-                value = buffer->empty() ? hotkey_def.default_ : *buffer;
+                value = buffer->empty() ? initial_value : *buffer;
             }
 
             config_opt.hotkeys[hotkey_def.name] = value;
@@ -2181,7 +2232,7 @@ bool Interactor::process_option(
     std::vector<Configuration::Option> nested_options;
     for (const auto* sc : selected_cases) {
         for (const auto& sub_option_name : sc->option) {
-            if (!process_option(sub_option_name, task_display_name, nested_options, auto_accept_default)) {
+            if (!process_option(sub_option_name, task_display_name, nested_options, auto_accept_default, current_options)) {
                 return false;
             }
         }
@@ -2290,7 +2341,241 @@ bool Interactor::process_level_options(
 
 void Interactor::edit_task()
 {
-    // TODO
+    using namespace MAA_PROJECT_INTERFACE_NS;
+
+    auto& all_config_tasks = config_.configuration().task;
+    if (all_config_tasks.empty()) {
+        std::cout << "No tasks to edit.\n\n";
+        return;
+    }
+
+    auto parse_choice = [](const std::string& line, int min, int max) -> std::optional<int> {
+        if (line.empty()) {
+            return std::nullopt;
+        }
+        int value = 0;
+        const auto* first = line.data();
+        const auto* last = first + line.size();
+        auto [ptr, ec] = std::from_chars(first, last, value);
+        if (ec != std::errc { } || ptr != last || value < min || value > max) {
+            return std::nullopt;
+        }
+        return value;
+    };
+
+    // 子选项
+    auto collect_children = [&](const std::vector<Configuration::Option>& options, const std::string& name) {
+        std::unordered_set<std::string> children;
+        std::vector<const InterfaceData::Option::Case*> selected_cases;
+        if (select_runtime_option_cases(name, options, selected_cases)) {
+            for (const auto* sc : selected_cases) {
+                for (const auto& child : sc->option) {
+                    children.insert(child);
+                }
+            }
+        }
+        return children;
+    };
+
+    // 选择任务
+    while (true) {
+        std::cout << "### Edit task ###\n\n";
+        print_config_tasks(true);
+        std::cout << "\t0. Back to main menu\n\n";
+
+        auto task_line = read_line("Select task: ");
+        if (!task_line) {
+            input_aborted_ = true;
+            return;
+        }
+
+        if (task_line->empty() || *task_line == "0") {
+            return; // 回到主菜单
+        }
+
+        auto task_num = parse_choice(*task_line, 1, static_cast<int>(all_config_tasks.size()));
+        if (!task_num) {
+            std::cout << "Invalid input.\n\n";
+            continue;
+        }
+
+        auto& config_task = all_config_tasks[static_cast<size_t>(*task_num - 1)];
+
+        // 从 interface 里查任务定义
+        auto data_task_iter = std::ranges::find(config_.interface_data().task, config_task.name, std::mem_fn(&InterfaceData::Task::name));
+
+        std::string task_display = config_task.name;
+        std::string task_desc;
+        if (data_task_iter != config_.interface_data().task.end()) {
+            task_display = get_display_name(data_task_iter->name, data_task_iter->label);
+            if (!data_task_iter->description.empty()) {
+                task_desc = read_text_content(data_task_iter->description);
+            }
+        }
+
+        std::cout << "\n### Task: " << MAA_NS::utf8_to_crt(task_display) << " ###\n\n";
+        if (!task_desc.empty()) {
+            std::cout << MAA_NS::utf8_to_crt(task_desc) << "\n\n";
+        }
+
+        // 补全当前活动分支中缺失的选项，同时保留已有配置。
+        if (data_task_iter != config_.interface_data().task.end() && !data_task_iter->option.empty()) {
+            auto completed_options = config_task.option;
+            if (!ensure_declared_option_tree(data_task_iter->option, task_display, completed_options, /*auto_accept_default=*/false)) {
+                if (input_aborted_) {
+                    return;
+                }
+                std::cout << "Failed to configure task options.\n\n";
+                continue;
+            }
+            config_task.option = std::move(completed_options);
+        }
+        else if (config_task.option.empty()) {
+            std::cout << "This task has no options.\n\n";
+            continue; // 回到任务选择
+        }
+
+        // 选择选项
+        while (true) {
+            std::cout << "Options:\n\n";
+
+            // 栈追踪当前遍历路径,计算每个选项的缩进深度
+            std::vector<std::unordered_set<std::string>> level_stack;
+
+            for (size_t i = 0; i < config_task.option.size(); ++i) {
+                const auto& opt = config_task.option[i];
+
+                // 弹出不再属于当前路径的层级
+                while (!level_stack.empty() && !level_stack.back().contains(opt.name)) {
+                    level_stack.pop_back();
+                }
+
+                const int depth = static_cast<int>(level_stack.size());
+                const std::string indent(static_cast<size_t>(depth), '-');
+
+                std::string val_str;
+                if (!opt.value.empty()) {
+                    val_str = opt.value;
+                }
+                else if (!opt.values.empty()) {
+                    val_str = "[";
+                    for (size_t j = 0; j < opt.values.size(); ++j) {
+                        if (j > 0) {
+                            val_str += ", ";
+                        }
+                        val_str += opt.values[j];
+                    }
+                    val_str += "]";
+                }
+                else if (!opt.inputs.empty()) {
+                    val_str = "{";
+                    bool first = true;
+                    for (const auto& [k, v] : opt.inputs) {
+                        if (!first) {
+                            val_str += ", ";
+                        }
+                        val_str += k;
+                        val_str += "=";
+                        val_str += display_input_value(opt.name, k, v);
+                        first = false;
+                    }
+                    val_str += "}";
+                }
+                else if (!opt.hotkeys.empty()) {
+                    val_str = "{";
+                    for (const auto& [key, value] : opt.hotkeys) {
+                        if (val_str.size() > 1) {
+                            val_str += ", ";
+                        }
+                        val_str += MaaPiCliTerminal::sanitize(key) + "=" + MaaPiCliTerminal::sanitize(value);
+                    }
+                    val_str += "}";
+                }
+                else {
+                    val_str = "(empty)";
+                }
+
+                std::cout << MAA_NS::utf8_to_crt(std::format("{}{}. {} = {}\n", indent, i + 1, opt.name, val_str));
+
+                // 把该选项的子选项集合压栈,供后续选项判断深度
+                auto children = collect_children(config_task.option, opt.name);
+                if (!children.empty()) {
+                    level_stack.push_back(std::move(children));
+                }
+            }
+
+            std::cout << "0. Back to task selection\n\n";
+
+            auto opt_line = read_line("Select option: ");
+            if (!opt_line) {
+                input_aborted_ = true;
+                return;
+            }
+
+            if (opt_line->empty() || *opt_line == "0") {
+                break; // 回到任务选择
+            }
+
+            auto opt_num = parse_choice(*opt_line, 1, static_cast<int>(config_task.option.size()));
+            if (!opt_num) {
+                std::cout << "Invalid input.\n\n";
+                continue;
+            }
+
+            const size_t oi = static_cast<size_t>(*opt_num - 1);
+            const std::string edited_name = config_task.option[oi].name;
+
+            // 定位旧子树范围 [subtree_begin, subtree_end)
+            auto subtree_begin = config_task.option.begin() + static_cast<std::ptrdiff_t>(oi);
+            auto subtree_end = std::next(subtree_begin);
+
+            // active_names 保存当前已确认属于子树的选项名
+            std::unordered_set<std::string> active_names;
+            auto collect_child_names = [&](const std::string& name) {
+                std::vector<const InterfaceData::Option::Case*> selected_cases;
+                if (!select_runtime_option_cases(name, config_task.option, selected_cases)) {
+                    return;
+                }
+                for (const auto* sc : selected_cases) {
+                    for (const auto& child : sc->option) {
+                        active_names.insert(child);
+                    }
+                }
+            };
+
+            collect_child_names(edited_name);
+            while (subtree_end != config_task.option.end() && active_names.contains(subtree_end->name)) {
+                collect_child_names(subtree_end->name);
+                ++subtree_end;
+            }
+
+            std::vector<Configuration::Option> current_subtree(subtree_begin, subtree_end);
+            std::vector<Configuration::Option> edited_result;
+            bool ok = process_option(edited_name, task_display, edited_result, /*auto_accept_default=*/false, &current_subtree);
+
+            if (!ok) {
+                LogError << "Failed to edit option" << VAR(edited_name);
+                std::cout << "Failed to edit option.\n\n";
+                continue; // 留在这个任务的选项列表
+            }
+
+            // 写回 config_task.option[oi]，并整体替换旧子树
+            auto new_iter = std::ranges::find_if(edited_result, [&](const auto& o) { return o.name == edited_name; });
+
+            if (new_iter == edited_result.end()) {
+                LogError << "Edited option not produced" << VAR(edited_name);
+                continue;
+            }
+
+            config_task.option.erase(subtree_begin, subtree_end);
+            config_task.option.insert(
+                config_task.option.begin() + static_cast<std::ptrdiff_t>(oi),
+                std::make_move_iterator(edited_result.begin()),
+                std::make_move_iterator(edited_result.end()));
+
+            std::cout << "Option \"" << MAA_NS::utf8_to_crt(edited_name) << "\" updated.\n\n";
+        }
+    }
 }
 
 void Interactor::print_config_tasks(bool with_index) const
@@ -2712,6 +2997,7 @@ bool Interactor::select_runtime_option_cases(
     } break;
 
     case InterfaceData::Option::Type::Input:
+    case InterfaceData::Option::Type::Hotkey:
         break;
     }
 
@@ -2765,7 +3051,8 @@ bool Interactor::ensure_declared_option_tree(
                     existing_option_iter->hotkeys.emplace(hotkey_def.name, hotkey_def.default_);
                 }
             }
-            if (!MaaPiCliHotkey::normalize_hotkeys(
+            if (auto_accept_default
+                && !MaaPiCliHotkey::normalize_hotkeys(
                     data_option,
                     *existing_option_iter,
                     MaaPiCliHotkey::keycode_set(config_.interface_data(), config_.configuration()))) {

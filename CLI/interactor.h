@@ -19,6 +19,7 @@ private:
         Complete,
         Exit,
         Aborted,
+        Failed,
     };
 
     bool interact_for_first_time_use();
@@ -86,7 +87,8 @@ private:
         const std::string& option_name,
         const std::string& task_display_name,
         std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>& config_options,
-        bool auto_accept_default = false);
+        bool auto_accept_default = false,
+        const std::vector<MAA_PROJECT_INTERFACE_NS::Configuration::Option>* current_options = nullptr);
 
     void print_config_tasks(bool with_index = true) const;
 

@@ -103,7 +103,7 @@ void test_preset_controller_filter(const std::filesystem::path& fixture_dir)
         }
 
         {
-            StreamRedirector redirector("7\n1\n8\n");
+            StreamRedirector redirector("8\n1\n9\n");
             std::filesystem::current_path(root_dir);
             Interactor interactor("user");
             require(interactor.load(fixture_dir), "controller-filtered preset fixture should load");
@@ -138,7 +138,7 @@ void test_preset_controller_filter(const std::filesystem::path& fixture_dir)
         stream << config.to_json().dumps();
     }
     {
-        StreamRedirector redirector("7\n");
+        StreamRedirector redirector("8\n");
         Interactor interactor(user_dir);
         require(interactor.load(fixture_dir / "no_match"), "a fixture with no applicable presets should load");
         require(interactor.interact(), "exit should retain its original index when no presets apply");
@@ -164,7 +164,7 @@ void test_path_inputs_and_agent_environment(const std::filesystem::path& fixture
     const std::string file = "C:\\future folder\\配置.json";
     const auto directory = MAA_NS::path_to_utf8_string(user_dir / "future folder");
     {
-        StreamRedirector redirector("3\n3\ninvalid.txt\n" + file + "\n" + directory + "\n\n\n\n8\n");
+        StreamRedirector redirector("3\n3\ninvalid.txt\n" + file + "\n" + directory + "\n\n\n\n9\n");
         Interactor interactor(user_dir);
         require(interactor.load(fixture_dir), "file and directory inputs should load without native dialogs");
         require(interactor.interact(), "manual path inputs should save successfully");
@@ -847,7 +847,7 @@ int main(int argc, char** argv)
         }
 
         {
-            StreamRedirector redirector("2\n2\n6\n\n");
+            StreamRedirector redirector("2\n2\n7\n\n");
             Interactor interactor(user_dir);
             require(interactor.load(resource_dir), "the stale inactive task fixture should load");
             require(interactor.interact(), "switching resources should recover a stale inactive task option");
@@ -895,7 +895,7 @@ int main(int argc, char** argv)
         }
 
         {
-            StreamRedirector redirector("7\n");
+            StreamRedirector redirector("8\n");
             Interactor interactor(user_dir);
             require(interactor.load(resource_dir), "the welcome fixture should load");
             require(interactor.interact(), "exiting after a welcome update should succeed");
@@ -910,7 +910,7 @@ int main(int argc, char** argv)
             "welcome snapshots should match the shown announcement");
 
         {
-            StreamRedirector redirector("7\n");
+            StreamRedirector redirector("8\n");
             Interactor interactor(user_dir);
             require(interactor.load(resource_dir), "the persisted welcome fixture should reload");
             require(interactor.interact(), "exiting after an unchanged welcome should succeed");
@@ -1349,7 +1349,7 @@ int main(int argc, char** argv)
         configuration.ios.udid = "saved-iphone";
         require(configurator.save(ios_user_dir), "iOS user configuration should save");
         {
-            StreamRedirector redirector("1\n\n3\n10.0.0.99\n3\n7\n");
+            StreamRedirector redirector("1\n\n3\n10.0.0.99\n3\n8\n");
             Interactor interactor(ios_user_dir);
             require(interactor.load(resource_dir), "saved iOS configuration should load in the CLI");
             require(interactor.interact(), "iOS device and screencap selection should complete");
@@ -1360,7 +1360,7 @@ int main(int argc, char** argv)
             "iOS selection should preserve the UDID and save the combined screencap method");
         require(saved && saved->ios.config.get("wifi_address", std::string()) == "10.0.0.99", "Wi-Fi selection should save its address");
         {
-            StreamRedirector redirector("1\n\n1\n\n2\n7\n");
+            StreamRedirector redirector("1\n\n1\n\n2\n8\n");
             Interactor interactor(ios_user_dir);
             require(interactor.load(resource_dir) && interactor.interact(), "switching from Wi-Fi to Auto should complete");
         }
@@ -1370,7 +1370,7 @@ int main(int argc, char** argv)
                 && saved->ios.config.get("server_port", 0) == 17424,
             "Auto must preserve a supplied Wi-Fi address and server settings");
         {
-            StreamRedirector redirector("1\n\n1\n-\n2\n7\n");
+            StreamRedirector redirector("1\n\n1\n-\n2\n8\n");
             Interactor interactor(ios_user_dir);
             require(interactor.load(resource_dir) && interactor.interact(), "clearing the Auto Wi-Fi address should complete");
         }
@@ -1384,7 +1384,7 @@ int main(int argc, char** argv)
         search_fixture.configuration().ios.config["server_port"] = -1;
         require(search_fixture.save(ios_user_dir), "unavailable discovery endpoint should save for the offline menu test");
         {
-            StreamRedirector redirector("1\n2\nother-iphone\n1\n\n2\n7\n");
+            StreamRedirector redirector("1\n2\nother-iphone\n1\n\n2\n8\n");
             Interactor interactor(ios_user_dir);
             require(interactor.load(resource_dir) && interactor.interact(), "saved iOS devices should allow another discovery attempt");
             require(
@@ -1394,7 +1394,7 @@ int main(int argc, char** argv)
         saved = Parser::parse_config(ios_user_dir / "config/maa_pi_config.json");
         require(saved && saved->ios.udid == "other-iphone", "failed discovery should allow entering a different UDID");
         {
-            StreamRedirector redirector("1\n3\nmanual-iphone\n1\n\n2\n7\n");
+            StreamRedirector redirector("1\n3\nmanual-iphone\n1\n\n2\n8\n");
             Interactor interactor(ios_user_dir);
             require(interactor.load(resource_dir) && interactor.interact(), "a saved device should allow direct manual replacement");
             require(
@@ -1450,7 +1450,7 @@ int main(int argc, char** argv)
             })json";
         }
         {
-            StreamRedirector redirector("1\n2\n\n\n\n7\n");
+            StreamRedirector redirector("1\n2\n\n\n\n8\n");
             Interactor interactor(ios_user_dir);
             require(interactor.load(resource_dir) && interactor.interact(), "switching iOS controllers should complete");
         }
@@ -1461,6 +1461,213 @@ int main(int argc, char** argv)
             "new controller must use its own device, settings and default menu choices");
         std::filesystem::remove_all(resource_dir);
         std::filesystem::remove_all(ios_user_dir);
+    }
+
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(user_dir / "config");
+
+        {
+            std::ofstream interface_stream(resource_dir / "interface.json");
+            interface_stream << R"json(
+{
+    "interface_version": 2,
+    "controller": [ { "name": "adb-controller", "type": "Adb" } ],
+    "resource": [ { "name": "default-resource", "path": [ "resource" ] } ],
+    "task": [
+        {
+            "name": "editable-task",
+            "entry": "EditableTask",
+            "option": [ "mode", "flag", "enabled", "standalone" ]
+        }
+    ],
+    "option": {
+        "mode": {
+            "type": "select",
+            "default_case": "off",
+            "cases": [ { "name": "on", "option": [ "nested-parent" ] }, { "name": "off" } ]
+        },
+        "nested-parent": {
+            "type": "select",
+            "default_case": "off",
+            "cases": [ { "name": "on", "option": [ "nested-a", "nested-b" ] }, { "name": "off" } ]
+        },
+        "nested-a": {
+            "type": "input",
+            "inputs": [ { "name": "value", "default": "a-default" } ]
+        },
+        "nested-b": {
+            "type": "input",
+            "inputs": [ { "name": "value", "default": "b-default" } ]
+        },
+        "flag": {
+            "type": "checkbox",
+            "default_case": [ "alpha" ],
+            "min_count": 1,
+            "max_count": 2,
+            "cases": [ { "name": "alpha" }, { "name": "beta" } ]
+        },
+        "enabled": {
+            "type": "switch",
+            "default_case": "No",
+            "cases": [ { "name": "Yes" }, { "name": "No" } ]
+        },
+        "standalone": {
+            "type": "input",
+            "inputs": [ { "name": "value", "default": "standalone-default" } ]
+        }
+    }
+}
+)json";
+        }
+
+        {
+            std::ofstream config_stream(user_dir / "config" / "maa_pi_config.json");
+            config_stream << R"json(
+{
+    "controller": { "name": "adb-controller" },
+    "resource": "default-resource",
+    "task": [
+        {
+            "name": "editable-task",
+            "option": [
+                { "name": "mode", "value": "on" },
+                { "name": "nested-parent", "value": "on" },
+                { "name": "nested-a", "inputs": { "value": "old-a" } },
+                { "name": "nested-b", "inputs": { "value": "old-b" } },
+                { "name": "flag", "values": [ "beta" ] },
+                { "name": "enabled", "value": "Yes" },
+                { "name": "standalone", "inputs": { "value": "old-standalone" } }
+            ]
+        }
+    ]
+}
+)json";
+        }
+
+        {
+            StreamRedirector redirector("4\n1\n1\n\n\n\n\n3\n\n5\n\n6\n\n7\n\n0\n0\n8\n");
+            Interactor interactor(user_dir);
+            require(interactor.load(resource_dir), "the editable task fixture should load");
+            const bool completed = interactor.interact();
+            if (!completed) {
+                std::cerr << redirector.output().str();
+            }
+            require(completed, "editing task options should complete");
+        }
+
+        const auto saved_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(user_dir / "config" / "maa_pi_config.json");
+        require(saved_config.has_value(), "the edited task configuration should be saved");
+        if (saved_config && saved_config->task.size() == 1) {
+            const auto& options = saved_config->task.front().option;
+            std::vector<std::string> names;
+            names.reserve(options.size());
+            for (const auto& option : options) {
+                names.emplace_back(option.name);
+            }
+            require(
+                names == std::vector<std::string> { "mode", "nested-parent", "nested-a", "nested-b", "flag", "enabled", "standalone" },
+                "editing nested options should preserve sibling options and their order");
+
+            if (options.size() == 7) {
+                require(options.at(0).value == "on", "editing a select with Enter should retain its configured value");
+                require(options.at(1).value == "on", "editing a nested select with Enter should retain its configured value");
+                require(
+                    options.at(2).inputs.at("value") == "old-a" && options.at(3).inputs.at("value") == "old-b",
+                    "editing a nested Input with Enter should retain its configured value");
+                require(
+                    options.at(4).values == std::vector<std::string> { "beta" },
+                    "editing a checkbox with Enter should retain its configured selection");
+                require(options.at(5).value == "Yes", "editing a switch with Enter should retain its configured value");
+                require(
+                    options.at(6).inputs.at("value") == "old-standalone",
+                    "editing a standalone Input should retain its configured value");
+            }
+        }
+
+        {
+            StreamRedirector redirector("4\n1\n2\n2\n0\n0\n8\n");
+            Interactor interactor(user_dir);
+            require(interactor.load(resource_dir), "the edited task fixture should reload");
+            const bool completed = interactor.interact();
+            if (!completed) {
+                std::cerr << redirector.output().str();
+            }
+            require(completed, "switching an edited option branch should complete");
+        }
+
+        const auto branch_changed_config = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(user_dir / "config" / "maa_pi_config.json");
+        require(branch_changed_config.has_value(), "the branch-changed task configuration should be saved");
+        if (branch_changed_config && branch_changed_config->task.size() == 1) {
+            const auto& options = branch_changed_config->task.front().option;
+            std::vector<std::string> names;
+            names.reserve(options.size());
+            for (const auto& option : options) {
+                names.emplace_back(option.name);
+            }
+            require(
+                names == std::vector<std::string> { "mode", "nested-parent", "flag", "enabled", "standalone" },
+                "switching a parent option should replace its subtree without removing later siblings");
+
+            if (options.size() == 5) {
+                require(options.at(0).value == "on", "switching a nested parent should not change its active parent");
+                require(options.at(1).value == "off", "switching a nested parent should store the new branch");
+                require(
+                    options.at(2).values == std::vector<std::string> { "beta" } && options.at(3).value == "Yes"
+                        && options.at(4).inputs.at("value") == "old-standalone",
+                    "switching a parent option should retain later configured options");
+            }
+        }
+
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(user_dir);
+    }
+
+    {
+        const auto resource_dir = unique_temp_directory();
+        const auto user_dir = unique_temp_directory();
+        std::filesystem::create_directories(resource_dir);
+        std::filesystem::create_directories(user_dir / "config");
+        {
+            std::ofstream out(resource_dir / "interface.json");
+            out << R"json({
+                "interface_version": 2,
+                "controller": [{"name":"controller","type":"Adb"}],
+                "resource": [{"name":"resource","path":["resource"]}],
+                "task": [{"name":"task","entry":"Main","option":["parent","new-option"]}],
+                "option": {
+                    "parent":{"type":"select","default_case":"on","cases":[{"name":"on","option":["shortcut"]}]},
+                    "shortcut":{"type":"hotkey","hotkeys":[{"name":"combo","default":"Ctrl+E"}]},
+                    "new-option":{"type":"input","inputs":[{"name":"value","default":"default"}]}
+                }
+            })json";
+        }
+        {
+            std::ofstream out(user_dir / "config/maa_pi_config.json");
+            out << R"json({"controller":{"name":"controller"},"resource":"resource","task":[{"name":"task","option":[
+                {"name":"parent","value":"on"},{"name":"shortcut","hotkeys":{"combo":"Ctrl+F"}}
+            ]}]})json";
+        }
+        {
+            // Configure the newly declared option, keep the parent and hotkey, then edit the new value and encounter EOF.
+            StreamRedirector redirector("4\n1\nconfigured\n1\n\n\n2\n\n3\nupdated\n");
+            Interactor interactor(user_dir);
+            require(interactor.load(resource_dir) && interactor.interact(), "editing and input interruption should complete");
+            require(redirector.output().str().find("combo=Ctrl+F") != std::string::npos, "the edit list should display saved hotkeys");
+        }
+        const auto saved = MAA_PROJECT_INTERFACE_NS::Parser::parse_config(user_dir / "config/maa_pi_config.json");
+        require(
+            saved && saved->task.size() == 1 && saved->task.front().option.size() == 3,
+            "missing options should be configured and saved");
+        if (saved && saved->task.size() == 1 && saved->task.front().option.size() == 3) {
+            const auto& options = saved->task.front().option;
+            require(options[1].hotkeys.at("combo") == "Ctrl+F", "editing a parent or hotkey should preserve the saved hotkey");
+            require(options[2].inputs.at("value") == "updated", "a completed edit should survive a subsequent EOF");
+        }
+        std::filesystem::remove_all(resource_dir);
+        std::filesystem::remove_all(user_dir);
     }
 
     if (failures != 0) {
