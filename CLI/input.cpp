@@ -11,6 +11,27 @@
 #include "MaaUtils/Platform.h"
 
 #ifdef _WIN32
+namespace
+{
+bool can_round_trip_code_page(std::string_view bytes, unsigned int code_page, std::wstring_view wide)
+{
+    if (bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())
+        || wide.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
+        return false;
+    }
+
+    const int wide_size = static_cast<int>(wide.size());
+    const int round_trip_size = WideCharToMultiByte(code_page, 0, wide.data(), wide_size, nullptr, 0, nullptr, nullptr);
+    if (round_trip_size <= 0 || static_cast<size_t>(round_trip_size) != bytes.size()) {
+        return false;
+    }
+
+    std::string round_trip(static_cast<size_t>(round_trip_size), '\0');
+    const int converted = WideCharToMultiByte(code_page, 0, wide.data(), wide_size, round_trip.data(), round_trip_size, nullptr, nullptr);
+    return converted == round_trip_size && round_trip == bytes;
+}
+}
+
 std::string code_page_to_utf8(std::string_view bytes, unsigned int code_page)
 {
     if (code_page == CP_UTF8) {
@@ -36,11 +57,8 @@ std::string code_page_to_utf8(std::string_view bytes, unsigned int code_page)
         return std::string(bytes);
     }
 
-    if (flags == 0) {
-        const bool best_fit = std::ranges::any_of(wbuf, [](wchar_t c) { return c == 0xFFFD || (c >= 0xE000 && c <= 0xF8FF); });
-        if (best_fit) {
-            return std::string(bytes);
-        }
+    if (flags == 0 && !can_round_trip_code_page(bytes, code_page, wbuf)) {
+        return std::string(bytes);
     }
 
     const int wbuf_size = static_cast<int>(wbuf.size());
