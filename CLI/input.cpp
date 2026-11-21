@@ -30,6 +30,11 @@ bool can_round_trip_code_page(std::string_view bytes, unsigned int code_page, st
     const int converted = WideCharToMultiByte(code_page, 0, wide.data(), wide_size, round_trip.data(), round_trip_size, nullptr, nullptr);
     return converted == round_trip_size && round_trip == bytes;
 }
+
+bool has_invalid_code_page_mapping(std::wstring_view wide)
+{
+    return std::ranges::any_of(wide, [](wchar_t c) { return c == 0xFFFD || (c >= 0xF8F0 && c <= 0xF8FF); });
+}
 }
 
 std::string code_page_to_utf8(std::string_view bytes, unsigned int code_page)
@@ -57,7 +62,7 @@ std::string code_page_to_utf8(std::string_view bytes, unsigned int code_page)
         return std::string(bytes);
     }
 
-    if (flags == 0 && !can_round_trip_code_page(bytes, code_page, wbuf)) {
+    if (flags == 0 && (has_invalid_code_page_mapping(wbuf) || !can_round_trip_code_page(bytes, code_page, wbuf))) {
         return std::string(bytes);
     }
 

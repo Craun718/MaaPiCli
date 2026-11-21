@@ -132,7 +132,7 @@ int main()
     }
     {
         const std::string user_defined_bytes = "\xF0\x40";
-        const std::string expected = "\xE3\x80\x80";
+        const std::string expected = "\xEE\x80\x80";
         require_bytes_equal(
             code_page_to_utf8(user_defined_bytes, 932),
             expected,
