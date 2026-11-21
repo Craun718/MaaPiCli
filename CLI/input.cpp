@@ -13,24 +13,6 @@
 #ifdef _WIN32
 namespace
 {
-bool can_round_trip_code_page(std::string_view bytes, unsigned int code_page, std::wstring_view wide)
-{
-    if (bytes.size() > static_cast<size_t>(std::numeric_limits<int>::max())
-        || wide.size() > static_cast<size_t>(std::numeric_limits<int>::max())) {
-        return false;
-    }
-
-    const int wide_size = static_cast<int>(wide.size());
-    const int round_trip_size = WideCharToMultiByte(code_page, 0, wide.data(), wide_size, nullptr, 0, nullptr, nullptr);
-    if (round_trip_size <= 0 || static_cast<size_t>(round_trip_size) != bytes.size()) {
-        return false;
-    }
-
-    std::string round_trip(static_cast<size_t>(round_trip_size), '\0');
-    const int converted = WideCharToMultiByte(code_page, 0, wide.data(), wide_size, round_trip.data(), round_trip_size, nullptr, nullptr);
-    return converted == round_trip_size && round_trip == bytes;
-}
-
 bool has_invalid_code_page_mapping(std::wstring_view wide)
 {
     return std::ranges::any_of(wide, [](wchar_t c) { return c == 0xFFFD || (c >= 0xF8F0 && c <= 0xF8FF); });
@@ -62,7 +44,7 @@ std::string code_page_to_utf8(std::string_view bytes, unsigned int code_page)
         return std::string(bytes);
     }
 
-    if (flags == 0 && (has_invalid_code_page_mapping(wbuf) || !can_round_trip_code_page(bytes, code_page, wbuf))) {
+    if (flags == 0 && has_invalid_code_page_mapping(wbuf)) {
         return std::string(bytes);
     }
 

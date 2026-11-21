@@ -139,6 +139,11 @@ int main()
             "CP932 user-defined characters in the private-use area should convert to UTF-8");
     }
     {
+        const std::string duplicate_bytes = "\xED\x40";
+        const std::string expected = "\xE7\xBA\x8A";
+        require_bytes_equal(code_page_to_utf8(duplicate_bytes, 932), expected, "CP932 duplicate mappings should convert to UTF-8");
+    }
+    {
         const std::string cp949_bytes = "\xC5\xD7\xBD\xBA\xC6\xAE";
         const std::string expected = "\xED\x85\x8C\xEC\x8A\xA4\xED\x8A\xB8";
         require_bytes_equal(code_page_to_utf8(cp949_bytes, 949), expected, "CP949 should convert to UTF-8");
