@@ -64,6 +64,8 @@ ctest --test-dir build -C RelWithDebInfo --output-on-failure
 
 下表列出当前支持的协议能力及其限制。Agent 通过 `PI_INTERFACE_VERSION` 声明协议扩展能力。
 
+如果项目启动了外部 Agent，其 MaaFramework 运行库必须支持 Agent 通信协议 9，才能与本版本的 MaaPiCli 连接。Agent 通信协议与 `PI_INTERFACE_VERSION` 是两回事。
+
 | 协议能力 | MaaPiCli 状态 |
 |----------|--------------|
 | 基础协议：项目信息、controller、resource、task、select/input/switch option、多资源加载与 pipeline override | ✅ 支持 |
